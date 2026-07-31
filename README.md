@@ -42,3 +42,13 @@ V4 should be treated as the first testable operating model:
 3. Workout results are captured after each session.
 4. AI reviews session data and recommends the next adjustment.
 5. Garmin data is considered recovery context, initially manual or exported.
+
+## Running tests
+
+Unit tests are located in `tests/`.
+
+From the repository root run:
+
+```bash
+python3 -m unittest discover -s tests
+```
