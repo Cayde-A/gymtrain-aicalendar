@@ -31,6 +31,7 @@ NORMALIZED_DIR = ROOT / "exports" / "garmin" / "normalized"
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Import Garmin data for TrainingOS.")
     parser.add_argument("--email", default=os.getenv("GARMIN_EMAIL"), help="Garmin email. Defaults to GARMIN_EMAIL.")
+    parser.add_argument("--password", default=os.getenv("GARMIN_PASSWORD"), help="Garmin password. Defaults to GARMIN_PASSWORD env var.")
     parser.add_argument("--days", type=int, default=7, help="Number of recent days to import.")
     parser.add_argument(
         "--end-date",
@@ -56,11 +57,12 @@ def import_garmin_client() -> Any:
     return Garmin
 
 
-def login(email: str | None) -> Any:
+def login(email: str | None, password: str | None) -> Any:
     Garmin = import_garmin_client()
     if not email:
         email = input("Garmin email: ").strip()
-    password = getpass.getpass("Garmin password: ")
+    if not password:
+        password = getpass.getpass("Garmin password: ")
     client = Garmin(email, password)
     client.login()
     return client
@@ -219,7 +221,7 @@ def write_json(path: Path, payload: Any) -> None:
 
 def main() -> int:
     args = parse_args()
-    client = login(args.email)
+    client = login(args.email, args.password)
     raw_days = [fetch_day(client, day) for day in date_range(args.end_date, args.days)]
     normalized = [normalize_day(day) for day in raw_days]
 
