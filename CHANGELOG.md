@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.6] - 2026-08-01
+
+### Added
+
+- Added Garmin retry test result documenting Garmin SSO `429 Too Many Requests` state.
+- Clarified that the next valid test is one token-initialization run after rate limit clears.
+
 ## [0.1.5] - 2026-07-31
 
 ### Added
