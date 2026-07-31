@@ -10,6 +10,8 @@ This folder tracks reusable project artifacts.
 - `weekly_review_template`: weekly progress and fatigue review.
 - `monthly_report_template`: body, recovery, and PR summary.
 - `supabase_schema.sql`: implementation-ready database schema.
+- `usage_flow_test_v0_1.md`: current MVP usage flow test.
+- `test_run_2026-07-31_dry_run.md`: first dry-run result using sample data.
 
 ## Artifact Rules
 
@@ -17,4 +19,3 @@ This folder tracks reusable project artifacts.
 - Logs define completed reality.
 - Database is the source of truth once V5/V6 begins.
 - AI recommendations should always reference the data version they used.
-

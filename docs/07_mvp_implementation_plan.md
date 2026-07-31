@@ -62,6 +62,9 @@ Minimum useful dataset:
 - PR calculation rules.
 - Weekly review checklist.
 - Garmin provider import notes.
+- Usage flow test checklist.
+
+See [Usage Flow Test v0.1](../artifacts/usage_flow_test_v0_1.md).
 
 ## Decision Gates
 

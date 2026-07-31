@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.3] - 2026-07-31
+
+### Added
+
+- Added MVP usage flow test checklist.
+- Added sample workout data for end-to-end flow testing.
+- Linked usage flow test from MVP plan and artifacts index.
+- Added first dry-run test result.
+
 ## [0.1.2] - 2026-07-31
 
 ### Added
