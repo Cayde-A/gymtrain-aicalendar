@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.5] - 2026-07-31
+
+### Added
+
+- Added first local Garmin import MVP script.
+- Added Python dependency file for Garmin import testing.
+- Added Garmin Import MVP documentation and first-test checklist.
+
 ## [0.1.4] - 2026-07-31
 
 ### Added

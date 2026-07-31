@@ -26,6 +26,7 @@ The project starts from TrainingOS V4: a PR-centered training methodology with G
 - [Garmin Provider Strategy](docs/08_garmin_provider_strategy.md)
 - [Garmin, Shortcuts, and ChatGPT Usage Flow](docs/09_usage_flow_garmin_shortcuts_chatgpt.md)
 - [Garmin Auto Import Plan](docs/10_garmin_auto_import_plan.md)
+- [Garmin Import MVP](docs/11_garmin_import_mvp.md)
 - [Backlog](BACKLOG.md)
 - [Artifacts](artifacts/README.md)
 - [Changelog](CHANGELOG.md)

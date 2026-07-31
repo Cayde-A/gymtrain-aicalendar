@@ -2,6 +2,9 @@
 .env
 .env.*
 *.log
+__pycache__/
+.pycache/
+.venv/
 node_modules/
 dist/
 build/
@@ -17,4 +20,3 @@ tokens/
 *.tcx
 *.sqlite
 *.db
-
