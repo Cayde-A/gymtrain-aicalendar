@@ -9,6 +9,7 @@ This MVP tests whether TrainingOS can log in to Garmin Connect, fetch recent dai
 - `scripts/garmin_import.py`: interactive local Garmin import script.
 - `requirements.txt`: Python dependency list.
 - `exports/garmin/normalized/daily_recovery_metrics.json`: generated normalized output, ignored by Git.
+- `exports/garmin/normalized/raw_schema_summary.json`: generated field-path/type summary, ignored by Git.
 - `exports/garmin/raw/`: optional raw output, ignored by Git.
 
 ## Setup
@@ -34,6 +35,8 @@ python3 scripts/garmin_import.py --days 30 --include-raw
 ## Security
 
 The script asks for Garmin credentials interactively.
+
+Prefer interactive password input. Avoid passing passwords through command-line arguments because they can appear in shell history or process listings.
 
 Do not commit:
 
@@ -74,6 +77,14 @@ These are already covered by `.gitignore`.
 
 Null values are acceptable in the first test. The purpose is to confirm login, available methods, and raw response shapes.
 
+If `raw_available` is true but metric values are still null, rerun the importer and inspect:
+
+```text
+exports/garmin/normalized/raw_schema_summary.json
+```
+
+This file contains field names and types only. It intentionally omits health values so it is safer for field-mapping work.
+
 ## First Test Checklist
 
 ```text
@@ -82,8 +93,8 @@ Garmin login:
 MFA prompt:
 7-day import:
 Normalized JSON created:
+Schema summary created:
 Metrics populated:
 Failures observed:
 Next fix:
 ```
-

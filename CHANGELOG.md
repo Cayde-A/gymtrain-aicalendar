@@ -7,6 +7,7 @@
 - Added first local Garmin import MVP script.
 - Added Python dependency file for Garmin import testing.
 - Added Garmin Import MVP documentation and first-test checklist.
+- Added value-free Garmin raw schema summary output for safer field mapping.
 
 ## [0.1.4] - 2026-07-31
 

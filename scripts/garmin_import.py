@@ -219,6 +219,55 @@ def write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
+def collect_schema_paths(payload: Any, prefix: str = "", limit: int = 300) -> list[dict[str, str]]:
+    paths: list[dict[str, str]] = []
+
+    def walk(value: Any, path: str) -> None:
+        if len(paths) >= limit:
+            return
+        if isinstance(value, dict):
+            for key, child in value.items():
+                child_path = f"{path}.{key}" if path else str(key)
+                if isinstance(child, (dict, list)):
+                    walk(child, child_path)
+                else:
+                    paths.append({"path": child_path, "type": type(child).__name__})
+        elif isinstance(value, list):
+            paths.append({"path": f"{path}[]", "type": "list", "length": str(len(value))})
+            if value:
+                walk(value[0], f"{path}[]")
+        else:
+            paths.append({"path": path, "type": type(value).__name__})
+
+    walk(payload, prefix)
+    return paths
+
+
+def build_schema_summary(raw_days: list[dict[str, Any]]) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "description": "Field-path/type summary only. Values are intentionally omitted.",
+        "days": len(raw_days),
+        "dates": [day.get("date") for day in raw_days],
+        "sections": {},
+    }
+    if not raw_days:
+        return summary
+
+    first_day = raw_days[0]
+    for section_name in ["stats", "sleep", "hrv", "body_battery", "training_readiness"]:
+        result = first_day.get(section_name, {})
+        section_summary = {
+            "ok": bool(result.get("ok")),
+            "source_method": result.get("source_method"),
+            "paths": [],
+            "failures": result.get("failures"),
+        }
+        if result.get("ok"):
+            section_summary["paths"] = collect_schema_paths(result.get("data"), section_name)
+        summary["sections"][section_name] = section_summary
+    return summary
+
+
 def main() -> int:
     args = parse_args()
     client = login(args.email, args.password)
@@ -227,12 +276,14 @@ def main() -> int:
 
     NORMALIZED_DIR.mkdir(parents=True, exist_ok=True)
     write_json(NORMALIZED_DIR / "daily_recovery_metrics.json", normalized)
+    write_json(NORMALIZED_DIR / "raw_schema_summary.json", build_schema_summary(raw_days))
 
     if args.include_raw:
         write_json(RAW_DIR / f"daily_raw_{args.end_date}_{args.days}d.json", raw_days)
 
     print(f"Wrote {len(normalized)} normalized Garmin daily records.")
     print(f"Output: {NORMALIZED_DIR / 'daily_recovery_metrics.json'}")
+    print(f"Schema summary: {NORMALIZED_DIR / 'raw_schema_summary.json'}")
     if args.include_raw:
         print(f"Raw output: {RAW_DIR}")
     return 0
@@ -240,4 +291,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
