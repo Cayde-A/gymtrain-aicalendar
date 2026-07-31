@@ -8,6 +8,7 @@
 - Define AI post-workout review prompt.
 - Define PR detection rules for 1RM, 3RM, 5RM, 8RM, and estimated 1RM.
 - Create Garmin Provider MVP using `python-garminconnect`, `GarminDB`, `garmin-data-export`, and `garmin-connect-export`.
+- Test local scheduled Garmin import with ignored token/export folders.
 
 ## Next
 
@@ -16,6 +17,7 @@
 - Add body metrics tracking.
 - Add Garmin recovery import template.
 - Add Garmin Provider failure recheck checklist.
+- Add Garmin import normalizer and duplicate-safe upsert rules.
 - Add weekly review template.
 - Add monthly report template.
 

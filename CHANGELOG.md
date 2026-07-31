@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.4] - 2026-07-31
+
+### Added
+
+- Added Garmin Auto Import Plan.
+- Defined local scheduled import as the recommended first implementation.
+- Added staged path from local import to Supabase-backed pipeline and official Garmin API.
+- Added security and acceptance criteria for Garmin auto import MVP.
+
 ## [0.1.3] - 2026-07-31
 
 ### Added
