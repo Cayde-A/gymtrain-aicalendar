@@ -11,6 +11,7 @@ This MVP tests whether TrainingOS can log in to Garmin Connect, fetch recent dai
 - `exports/garmin/normalized/daily_recovery_metrics.json`: generated normalized output, ignored by Git.
 - `exports/garmin/normalized/raw_schema_summary.json`: generated field-path/type summary, ignored by Git.
 - `exports/garmin/raw/`: optional raw output, ignored by Git.
+- `tokens/garmin/`: local Garmin OAuth token cache, ignored by Git.
 
 ## Setup
 
@@ -28,6 +29,20 @@ GARMIN_PASSWORD=your-password
 ```
 
 Use `env.garmin.example` as the template. `.env.local` is ignored by Git.
+
+Alternatively, start the local-only login page:
+
+```bash
+.venv/bin/python scripts/garmin_local_login_ui.py
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8765
+```
+
+This page writes `.env.local` locally and can trigger a 3-day import test.
 
 Run a 7-day import:
 
@@ -58,6 +73,14 @@ Do not commit:
 These are already covered by `.gitignore`.
 
 If you use `.env.local`, delete it after testing or keep it only on your private machine.
+
+After the first successful login, the importer saves Garmin OAuth tokens under:
+
+```text
+tokens/garmin/
+```
+
+Future imports should reuse those tokens and avoid repeated password logins. This matters because Garmin may return `429 Too Many Requests` after repeated authentication attempts.
 
 ## Expected Output
 

@@ -26,6 +26,7 @@ from typing import Any, Callable
 ROOT = Path(__file__).resolve().parents[1]
 RAW_DIR = ROOT / "exports" / "garmin" / "raw"
 NORMALIZED_DIR = ROOT / "exports" / "garmin" / "normalized"
+DEFAULT_TOKENSTORE = ROOT / "tokens" / "garmin"
 
 
 def load_dotenv_local() -> None:
@@ -48,6 +49,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Import Garmin data for TrainingOS.")
     parser.add_argument("--email", default=os.getenv("GARMIN_EMAIL"), help="Garmin email. Defaults to GARMIN_EMAIL.")
     parser.add_argument("--password", default=os.getenv("GARMIN_PASSWORD"), help="Garmin password. Defaults to GARMIN_PASSWORD env var.")
+    parser.add_argument(
+        "--tokenstore",
+        default=os.getenv("GARMINTOKENS", str(DEFAULT_TOKENSTORE)),
+        help="Local Garmin token cache directory. Defaults to tokens/garmin.",
+    )
     parser.add_argument("--days", type=int, default=7, help="Number of recent days to import.")
     parser.add_argument(
         "--end-date",
@@ -73,14 +79,26 @@ def import_garmin_client() -> Any:
     return Garmin
 
 
-def login(email: str | None, password: str | None) -> Any:
+def has_tokens(tokenstore: Path) -> bool:
+    return (tokenstore / "oauth1_token.json").exists() and (tokenstore / "oauth2_token.json").exists()
+
+
+def login(email: str | None, password: str | None, tokenstore: str) -> Any:
     Garmin = import_garmin_client()
+    tokenstore_path = Path(tokenstore).expanduser()
+    if has_tokens(tokenstore_path):
+        client = Garmin()
+        client.login(str(tokenstore_path))
+        return client
+
     if not email:
         email = input("Garmin email: ").strip()
     if not password:
         password = getpass.getpass("Garmin password: ")
     client = Garmin(email, password)
     client.login()
+    tokenstore_path.mkdir(parents=True, exist_ok=True)
+    client.garth.dump(str(tokenstore_path))
     return client
 
 
@@ -185,6 +203,26 @@ def deep_find_string(payload: Any, names: set[str]) -> str | None:
     return None
 
 
+def body_battery_last_value(payload: Any) -> int | None:
+    if not isinstance(payload, list):
+        return None
+    candidates: list[int] = []
+    for day in payload:
+        if not isinstance(day, dict):
+            continue
+        values = day.get("bodyBatteryValuesArray")
+        if not isinstance(values, list):
+            continue
+        for item in values:
+            if (
+                isinstance(item, list)
+                and len(item) >= 2
+                and isinstance(item[1], int)
+            ):
+                candidates.append(item[1])
+    return candidates[-1] if candidates else None
+
+
 def unwrap(result: dict[str, Any]) -> Any:
     if result.get("ok"):
         return result.get("data")
@@ -214,7 +252,8 @@ def normalize_day(raw: dict[str, Any]) -> dict[str, Any]:
         "sleep_duration_minutes": sleep_minutes,
         "hrv_status": deep_find_string(hrv, {"hrvstatus", "status"}),
         "resting_heart_rate": deep_find_number(stats, {"restingheartrate", "restinghr"}),
-        "body_battery": deep_find_number(body_battery, {"bodybattery", "charged", "level"}),
+        "body_battery": body_battery_last_value(body_battery)
+        or deep_find_number(body_battery, {"bodybattery", "charged", "level"}),
         "stress_score": deep_find_number(stats, {"averagestresslevel", "stressscore"}),
         "training_readiness": deep_find_number(training_readiness, {"score", "trainingreadinessscore"}),
         "recovery_time_hours": deep_find_number(stats, {"recoverytime", "recoverytimehours"}),
@@ -286,7 +325,7 @@ def build_schema_summary(raw_days: list[dict[str, Any]]) -> dict[str, Any]:
 
 def main() -> int:
     args = parse_args()
-    client = login(args.email, args.password)
+    client = login(args.email, args.password, args.tokenstore)
     raw_days = [fetch_day(client, day) for day in date_range(args.end_date, args.days)]
     normalized = [normalize_day(day) for day in raw_days]
 

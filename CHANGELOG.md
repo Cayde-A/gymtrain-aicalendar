@@ -9,6 +9,10 @@
 - Added Garmin Import MVP documentation and first-test checklist.
 - Added value-free Garmin raw schema summary output for safer field mapping.
 - Added `.env.local` support and a Garmin environment template for non-interactive local testing.
+- Added local-only Garmin login web UI for credential entry when interactive terminal input is unavailable.
+- Added visible submit feedback to the local Garmin login UI.
+- Added Body Battery array normalization.
+- Added Garmin token cache support to reduce repeated password logins and avoid rate limiting.
 
 ## [0.1.4] - 2026-07-31
 
