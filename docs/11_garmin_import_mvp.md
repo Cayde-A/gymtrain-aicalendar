@@ -20,6 +20,15 @@ Install dependencies:
 python3 -m pip install -r requirements.txt
 ```
 
+If the Codex terminal does not allow interactive input, create a local `.env.local` file:
+
+```text
+GARMIN_EMAIL=your-email@example.com
+GARMIN_PASSWORD=your-password
+```
+
+Use `env.garmin.example` as the template. `.env.local` is ignored by Git.
+
 Run a 7-day import:
 
 ```bash
@@ -47,6 +56,8 @@ Do not commit:
 - raw health data.
 
 These are already covered by `.gitignore`.
+
+If you use `.env.local`, delete it after testing or keep it only on your private machine.
 
 ## Expected Output
 

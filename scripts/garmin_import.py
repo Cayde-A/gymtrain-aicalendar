@@ -28,7 +28,23 @@ RAW_DIR = ROOT / "exports" / "garmin" / "raw"
 NORMALIZED_DIR = ROOT / "exports" / "garmin" / "normalized"
 
 
+def load_dotenv_local() -> None:
+    env_path = ROOT / ".env.local"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
 def parse_args() -> argparse.Namespace:
+    load_dotenv_local()
     parser = argparse.ArgumentParser(description="Import Garmin data for TrainingOS.")
     parser.add_argument("--email", default=os.getenv("GARMIN_EMAIL"), help="Garmin email. Defaults to GARMIN_EMAIL.")
     parser.add_argument("--password", default=os.getenv("GARMIN_PASSWORD"), help="Garmin password. Defaults to GARMIN_PASSWORD env var.")

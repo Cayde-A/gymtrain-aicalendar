@@ -8,6 +8,7 @@
 - Added Python dependency file for Garmin import testing.
 - Added Garmin Import MVP documentation and first-test checklist.
 - Added value-free Garmin raw schema summary output for safer field mapping.
+- Added `.env.local` support and a Garmin environment template for non-interactive local testing.
 
 ## [0.1.4] - 2026-07-31
 
