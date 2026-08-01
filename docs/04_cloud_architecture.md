@@ -56,6 +56,8 @@ Responsibilities:
 
 Garmin should be normalized into TrainingOS tables instead of becoming the database.
 
+Garmin should execute and record workouts, but TrainingOS should generate the planned training rounds before training. This avoids relying on the watch to choose or correct exact gym equipment names during the session.
+
 Initial Garmin ingestion should combine reusable open-source tools behind a provider boundary:
 
 - `python-garminconnect` as the primary API wrapper;
@@ -71,7 +73,8 @@ Responsibilities:
 
 - show today's workout;
 - show last performance and target;
-- log set quickly after completion;
+- show TrainingOS-generated training rounds before the workout;
+- log or correct sets quickly after completion;
 - support manual entry first;
 - later support voice entry;
 - later explore automatic prompts from rest detection or media pause.
@@ -105,7 +108,7 @@ For MVP, AI review can be triggered through Apple Shortcuts and the ChatGPT app.
 ### Planned Workout
 
 ```text
-Training Plan -> Supabase -> ICS/Google Calendar -> User
+Garmin Recovery + PR History -> AI Coach -> Supabase Planned Rounds -> User
 ```
 
 ### Completed Workout
@@ -134,7 +137,8 @@ Recommended MVP:
 
 - Supabase database;
 - simple mobile-friendly web app;
-- manual workout logging;
+- TrainingOS-generated planned training rounds;
+- manual workout correction/logging;
 - manually imported or generated ICS;
 - Garmin data import through the approved provider stack, with manual entry as fallback;
 - AI review through exported summary.

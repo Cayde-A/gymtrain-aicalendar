@@ -33,6 +33,7 @@ Milestones:
 - V5.4: Add monthly report.
 - V5.5: Add automatic progression suggestions.
 - V5.6: Add Apple Shortcut for post-workout ChatGPT review.
+- V5.7: Generate morning preset training rounds from Garmin recovery and PR history.
 
 Exit criteria:
 
@@ -56,10 +57,12 @@ Milestones:
 - V6.6: Voice input experiment.
 - V6.7: Rest-detection or media-pause prompt experiment.
 - V6.8: Move next-day training generation to backend automation.
+- V6.9: Export approved planned rounds into Garmin-compatible workout structure if feasible.
 
 Exit criteria:
 
 - Today's workout appears automatically.
+- Today's training rounds are generated before training.
 - Each set can be logged quickly on mobile.
 - Garmin recovery context is attached to the session.
 - Calendar is updated after completion.

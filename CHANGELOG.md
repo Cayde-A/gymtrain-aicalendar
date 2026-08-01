@@ -9,6 +9,8 @@
 - Added successful Garmin import test result with token initialization and partial normalized metrics.
 - Added explicit Garmin-to-TrainingOS field mapping and mapping coverage output.
 - Added Garmin Field Mapping documentation.
+- Added preset training rounds design.
+- Updated architecture, roadmap, usage flow, and backlog so TrainingOS generates workout rounds before Garmin execution.
 
 ## [0.1.5] - 2026-07-31
 

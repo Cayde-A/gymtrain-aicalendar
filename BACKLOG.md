@@ -9,6 +9,7 @@
 - Define PR detection rules for 1RM, 3RM, 5RM, 8RM, and estimated 1RM.
 - Create Garmin Provider MVP using `python-garminconnect`, `GarminDB`, `garmin-data-export`, and `garmin-connect-export`.
 - Test local scheduled Garmin import with ignored token/export folders.
+- Define first preset training round generator for morning use.
 
 ## Next
 
@@ -18,6 +19,8 @@
 - Add Garmin recovery import template.
 - Add Garmin Provider failure recheck checklist.
 - Add Garmin import normalizer and duplicate-safe upsert rules.
+- Add planned training rounds table/schema.
+- Add morning plan prompt using Garmin recovery and PR history.
 - Add weekly review template.
 - Add monthly report template.
 

@@ -7,7 +7,8 @@ TrainingOS should first use Garmin's built-in Strength activity as the workout r
 The goal is:
 
 ```text
-Record sets on Garmin
+TrainingOS generates planned training rounds
+-> User executes with Garmin Strength Activity
 -> Sync to Garmin Connect
 -> Import to TrainingOS cloud database
 -> Trigger analysis through Shortcut or API
@@ -24,6 +25,7 @@ This is the most practical first version.
 
 ```text
 Garmin Strength Activity
+-> TrainingOS morning plan shown in PWA/Shortcut/Calendar
 -> Garmin Connect sync
 -> TrainingOS Garmin Provider import
 -> Supabase stores normalized workout data
@@ -57,6 +59,7 @@ This is the preferred long-term version.
 
 ```text
 Garmin Strength Activity
+-> TrainingOS planned rounds
 -> Garmin Connect sync
 -> Garmin Provider import
 -> Supabase
@@ -80,7 +83,7 @@ Use this when:
 
 Recommended first.
 
-Garmin can record strength sets, reps, weight, rest periods, and exercise details. After sync, TrainingOS imports the activity from Garmin Connect.
+Garmin can record strength sets, reps, weight, and rest periods. TrainingOS should provide the planned exercise order and target rounds before the session, because exact exercise/equipment correction is more reliable in TrainingOS or Garmin Connect after sync.
 
 Best for:
 
@@ -116,21 +119,23 @@ Best for:
 ## Recommended MVP Flow
 
 ```text
-1. Start Garmin Strength activity.
-2. Record sets/reps/weight on Garmin.
-3. Save workout.
-4. Let Garmin Connect sync.
-5. TrainingOS imports the activity through Garmin Provider.
-6. Apple Shortcut runs "TrainingOS Review".
-7. Shortcut sends today's normalized summary to ChatGPT App or API.
-8. AI returns:
+1. Morning Garmin recovery metrics are imported.
+2. TrainingOS reads recent PR and workout history.
+3. TrainingOS generates today's training rounds.
+4. User reviews the plan in PWA, Shortcut, or Calendar.
+5. User starts Garmin Strength activity and follows the TrainingOS plan.
+6. User records sets/reps/weight on Garmin.
+7. Save workout and let Garmin Connect sync.
+8. TrainingOS imports the activity through Garmin Provider.
+9. User adds corrections, RPE, pain, and notes.
+10. AI returns:
    - PR status;
    - estimated 1RM;
    - fatigue risk;
    - next-day plan;
    - Increase / Keep / Reduce / Deload decisions.
-9. Save approved recommendation into Supabase.
-10. Update Google Calendar with completed summary and next target.
+11. Save approved recommendation into Supabase.
+12. Update Google Calendar with completed summary and next target.
 ```
 
 ## Shortcut Roles
@@ -162,6 +167,7 @@ Action:
 
 - read latest `ai_reviews`;
 - show today's target;
+- show TrainingOS-generated training rounds;
 - optionally open Garmin Strength activity manually.
 
 ### Shortcut C: Quick Correction
@@ -198,4 +204,3 @@ Supabase
 ```
 
 This keeps the user experience simple now while preserving a reliable automation path later.
-
