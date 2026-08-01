@@ -14,6 +14,7 @@
 - Added first planned workout for 2026-08-02.
 - Successfully uploaded, scheduled, and pushed a Garmin Strength workout to Garmin Connect/device sync.
 - Added Garmin workout push test record and separate Python 3.12 workout requirements.
+- Confirmed Garmin Connect calendar and EPIX watch sync success for the first TrainingOS planned workout.
 
 ## [0.1.5] - 2026-07-31
 
