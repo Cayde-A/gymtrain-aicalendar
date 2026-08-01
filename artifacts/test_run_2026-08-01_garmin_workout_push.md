@@ -59,6 +59,27 @@ Target HR: 135-150
 5. Confirm the workout appears on the watch. Done.
 ```
 
+## Watch Entry Path
+
+Confirmed stable entry path on Garmin epix:
+
+```text
+Watch face
+-> START
+-> Strength
+-> Hold MENU
+-> Training
+-> Training Calendar
+-> TrainingOS Push 2026-08-02
+-> Do Workout
+```
+
+Result:
+
+```text
+Pass
+```
+
 ## Product Impact
 
 This confirms the highest-risk MVP loop is technically feasible:
