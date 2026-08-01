@@ -2,7 +2,7 @@
 
 TrainingOS is a personal training platform project for turning a static fitness plan into a long-term, data-driven training system.
 
-The project starts from TrainingOS V4: a PR-centered training methodology with Google Calendar/ICS scheduling and manual training follow-up. It then evolves toward V5/V6: a cloud-backed system using Supabase, Garmin data, mobile training capture, dashboards, and AI coaching.
+The project starts from TrainingOS V4: a PR-centered training methodology with Google Calendar/ICS scheduling and manual training follow-up. It then evolves toward V5/V6: a local-first system using SQLite, optional monthly Supabase sync, Garmin data, mobile training capture, dashboards, and AI coaching.
 
 ## Project Goals
 
@@ -10,7 +10,7 @@ The project starts from TrainingOS V4: a PR-centered training methodology with G
 - Use PR and estimated 1RM trends as the main performance signal.
 - Keep training weights dynamic instead of hardcoded into the calendar.
 - Use Google Calendar/ICS for reminders and training structure.
-- Use a single database as the long-term source of truth.
+- Use a local-first database as the long-term source of truth.
 - Integrate Garmin as a physiology data provider, not as the core database.
 - Build toward an AI-assisted training loop that can adjust future sessions.
 
@@ -29,6 +29,8 @@ The project starts from TrainingOS V4: a PR-centered training methodology with G
 - [Garmin Import MVP](docs/11_garmin_import_mvp.md)
 - [Garmin Field Mapping](docs/12_garmin_field_mapping.md)
 - [Preset Training Rounds](docs/13_preset_training_rounds.md)
+- [Local-First Monthly Sync Strategy](docs/14_local_first_monthly_sync.md)
+- [Local SQLite Schema](schema/local_sqlite.sql)
 - [Backlog](BACKLOG.md)
 - [Artifacts](artifacts/README.md)
 - [Changelog](CHANGELOG.md)
@@ -71,6 +73,23 @@ Watch face
 6. TrainingOS imports or reconciles the Garmin activity, then AI reviews the result and prepares the next training recommendation.
 
 Do not store personal Garmin credentials, OAuth tokens, raw health exports, device identifiers, or private workout results in Git.
+
+## Privacy Model
+
+TrainingOS is local-first by default:
+
+```text
+Local SQLite
+-> complete private training and recovery history
+
+Supabase
+-> optional monthly minimized summaries
+
+GitHub
+-> reusable code, docs, schema, and fake test data only
+```
+
+The default sync strategy is monthly upload of minimized summaries, followed by cleanup of raw Garmin cache and temporary sync packages.
 
 ## Running tests
 

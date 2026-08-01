@@ -20,7 +20,7 @@ Build a sustainable training system that helps reduce body weight toward 70-80 k
 
 - Performance first: PR and estimated 1RM are primary signals.
 - Dynamic loading: weights change based on completion, RPE, and recovery.
-- One source of truth: training, body, recovery, and nutrition data should eventually live in one database.
+- Local-first source of truth: complete training, body, recovery, and nutrition data should live in a private local database by default.
 - Calendar as interface: Google Calendar reminds and structures training, but should not become the main database.
 - Garmin as provider: Garmin contributes physiology data, but does not define training logic.
 - AI as coach layer: AI interprets data and recommends progression, maintenance, or deload.
@@ -33,4 +33,3 @@ Build a sustainable training system that helps reduce body weight toward 70-80 k
 - The system can recommend Increase, Keep, Reduce, or Deload after a workout.
 - Garmin recovery data can be attached to each training day.
 - Future integrations can be added without redesigning the whole project.
-

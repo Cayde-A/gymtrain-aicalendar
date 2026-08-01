@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added local-first monthly sync strategy for privacy-aware TrainingOS data handling.
+- Updated architecture and schema drafts so local SQLite is the complete private source of truth and Supabase is a minimized monthly sync layer.
 - Added Garmin retry test result documenting Garmin SSO `429 Too Many Requests` state.
 - Clarified that the next valid test is one token-initialization run after rate limit clears.
 - Added successful Garmin import test result with token initialization and partial normalized metrics.

@@ -37,7 +37,7 @@ Recommended daily flow:
 -> TrainingOS reads recent training performance and PR history
 -> AI Coach generates today's training rounds
 -> User reviews and approves
--> Plan is written to Supabase
+-> Plan is written to local SQLite
 -> Optional: export/send workout to Garmin or show in mobile/PWA
 -> Google Calendar summary is updated
 ```
@@ -156,4 +156,3 @@ The first preset-round MVP is successful when:
 - Garmin activity can be imported afterward.
 - User can add RPE, pain, and corrections in under 60 seconds.
 - The next plan uses the completed workout.
-

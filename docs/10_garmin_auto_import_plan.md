@@ -10,7 +10,7 @@ Use a staged approach:
 
 ```text
 Stage 1: local scheduled import
-Stage 2: Supabase-backed import pipeline
+Stage 2: monthly minimized Supabase sync
 Stage 3: official Garmin API or stable production provider
 ```
 
@@ -22,7 +22,8 @@ This is the recommended first implementation.
 Mac local scheduler
 -> Garmin export/import script
 -> normalized JSON
--> Supabase
+-> Local SQLite
+-> temporary raw cache
 ```
 
 Why:
@@ -123,7 +124,7 @@ Minimum activity record:
 }
 ```
 
-### 5. Load into Supabase
+### 5. Load into Local SQLite
 
 Insert or upsert by stable keys:
 
@@ -135,7 +136,40 @@ garmin_activities:
 provider + external_activity_id
 ```
 
-### 6. Schedule
+### 6. Monthly minimized sync
+
+Once per month, generate a minimized summary from local SQLite and upload only the approved summary fields to Supabase.
+
+Default upload:
+
+- training days;
+- session count by type;
+- exercise-level volume summary;
+- best sets and PR count;
+- estimated 1RM trends;
+- recovery averages;
+- approved AI monthly summary;
+- next-month focus.
+
+Default exclusions:
+
+- raw Garmin JSON;
+- Garmin tokens;
+- Garmin user ID;
+- device identifiers;
+- GPS routes;
+- minute-level heart-rate series;
+- private notes.
+
+After successful upload:
+
+```text
+Delete temporary sync package
+Delete raw Garmin cache older than retention window
+Keep local SQLite history
+```
+
+### 7. Schedule
 
 Recommended MVP schedule:
 
@@ -143,23 +177,26 @@ Recommended MVP schedule:
 Daily import: 06:30
 Post-workout import: manual Shortcut or button
 Evening review: 21:00
+Monthly minimized sync: first day of month
 ```
 
-## Stage 2: Supabase-Backed Pipeline
+## Stage 2: Monthly Minimized Supabase Sync
 
 Once Stage 1 works, move the pipeline toward:
 
 ```text
 Scheduled job
 -> Garmin Provider
--> Supabase
+-> Local SQLite
 -> AI review trigger
--> Google Calendar update
+-> Monthly minimized summary
+-> Supabase
+-> Google Calendar update if approved
 ```
 
 Options:
 
-- local Mac scheduler continues to push into Supabase;
+- local Mac scheduler continues to write into SQLite and push only monthly summaries into Supabase;
 - GitHub Actions scheduled job, if Garmin authentication is stable;
 - small private server or cloud worker;
 - Supabase Edge Function only if the Garmin provider can run reliably there.
@@ -174,7 +211,8 @@ Official path:
 Garmin user consent
 -> Garmin API push/pull
 -> TrainingOS webhook/API
--> Supabase
+-> Local SQLite
+-> minimized Supabase summaries
 ```
 
 Use official API when:
@@ -236,6 +274,8 @@ Garmin raw activity
 - Never commit raw Garmin health export.
 - Use `.gitignore` for exports and tokens.
 - Keep only normalized test/sample data in GitHub.
+- Keep local SQLite out of Git.
+- Upload monthly minimized summaries to Supabase by default, not raw provider payloads.
 
 ## MVP Acceptance Criteria
 
@@ -248,4 +288,3 @@ The Garmin auto import MVP is successful when:
 - duplicate imports do not create duplicate records;
 - AI review can use the imported recovery and activity data;
 - no private data is committed to GitHub.
-

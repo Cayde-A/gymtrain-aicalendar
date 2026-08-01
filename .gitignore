@@ -16,6 +16,9 @@ build/
 # Garmin/private exports
 exports/
 tokens/
+data/
+imports/
+sync-packages/
 *.fit
 *.gpx
 *.tcx

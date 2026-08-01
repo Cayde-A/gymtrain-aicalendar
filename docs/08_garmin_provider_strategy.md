@@ -30,7 +30,7 @@ TrainingOS usage:
 python-garminconnect
 -> raw Garmin JSON
 -> TrainingOS normalization
--> Supabase tables
+-> Local SQLite tables
 ```
 
 ### 2. GarminDB
@@ -61,7 +61,7 @@ Use for:
 - initial full Garmin export;
 - incremental updates;
 - compact JSON/text output for AI review;
-- quick backup before building direct Supabase ingestion.
+- quick backup before building local SQLite ingestion.
 
 TrainingOS usage:
 
@@ -163,6 +163,7 @@ Use this priority order:
 - Do not commit Garmin tokens.
 - Do not commit raw health exports.
 - Store tokens and exports outside version control.
+- Keep local SQLite databases outside version control.
 - Treat Garmin OAuth tokens like passwords.
 - Prefer interactive credential entry during setup.
 
@@ -172,6 +173,5 @@ Use this priority order:
 2. Use `python-garminconnect` directly for daily recovery metrics.
 3. Compare exported activity data with `garmin-connect-export`.
 4. Use GarminDB as a reference if schema or historical import becomes complex.
-5. Normalize into TrainingOS tables.
+5. Normalize into TrainingOS local SQLite tables.
 6. Add failure recheck notes to changelog whenever the provider is updated.
-
