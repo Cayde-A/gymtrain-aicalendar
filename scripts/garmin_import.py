@@ -27,6 +27,52 @@ ROOT = Path(__file__).resolve().parents[1]
 RAW_DIR = ROOT / "exports" / "garmin" / "raw"
 NORMALIZED_DIR = ROOT / "exports" / "garmin" / "normalized"
 DEFAULT_TOKENSTORE = ROOT / "tokens" / "garmin"
+NORMALIZED_FIELDS = [
+    "sleep_score",
+    "sleep_duration_minutes",
+    "hrv_status",
+    "resting_heart_rate",
+    "body_battery",
+    "stress_score",
+    "training_readiness",
+    "recovery_time_hours",
+    "steps",
+    "calories",
+]
+
+FIELD_MAPPINGS = {
+    "sleep_score": [
+        "sleep.dailySleepDTO.sleepScores.overall.value",
+    ],
+    "sleep_duration_minutes": [
+        "sleep.dailySleepDTO.sleepTimeSeconds",
+    ],
+    "hrv_status": [
+        "hrv.hrvSummary.status",
+    ],
+    "resting_heart_rate": [
+        "stats.restingHeartRate",
+    ],
+    "body_battery": [
+        "stats.bodyBatteryMostRecentValue",
+        "body_battery[].bodyBatteryValuesArray[][]",
+    ],
+    "stress_score": [
+        "stats.averageStressLevel",
+    ],
+    "training_readiness": [
+        "training_readiness[].score",
+    ],
+    "recovery_time_hours": [
+        "training_readiness[].recoveryTime",
+    ],
+    "steps": [
+        "stats.totalSteps",
+    ],
+    "calories": [
+        "stats.totalKilocalories",
+    ],
+}
 
 
 def load_dotenv_local() -> None:
@@ -223,6 +269,55 @@ def body_battery_last_value(payload: Any) -> int | None:
     return candidates[-1] if candidates else None
 
 
+def value_at_path(payload: Any, path: str) -> Any:
+    current = payload
+    for part in path.split("."):
+        if part.endswith("[]"):
+            key = part[:-2]
+            if isinstance(current, dict):
+                current = current.get(key)
+            if isinstance(current, list):
+                current = current[0] if current else None
+            else:
+                return None
+        else:
+            if isinstance(current, dict):
+                current = current.get(part)
+            else:
+                return None
+    return current
+
+
+def number_at_path(payload: Any, path: str) -> float | int | None:
+    value = value_at_path(payload, path)
+    if isinstance(value, (int, float)):
+        return value
+    return None
+
+
+def string_at_path(payload: Any, path: str) -> str | None:
+    value = value_at_path(payload, path)
+    if isinstance(value, str):
+        return value
+    return None
+
+
+def first_number(payload: Any, paths: list[str]) -> float | int | None:
+    for path in paths:
+        value = number_at_path(payload, path)
+        if value is not None:
+            return value
+    return None
+
+
+def first_string(payload: Any, paths: list[str]) -> str | None:
+    for path in paths:
+        value = string_at_path(payload, path)
+        if value is not None:
+            return value
+    return None
+
+
 def unwrap(result: dict[str, Any]) -> Any:
     if result.get("ok"):
         return result.get("data")
@@ -235,30 +330,42 @@ def normalize_day(raw: dict[str, Any]) -> dict[str, Any]:
     hrv = unwrap(raw["hrv"])
     body_battery = unwrap(raw["body_battery"])
     training_readiness = unwrap(raw["training_readiness"])
+    mapped_payload = {
+        "stats": stats,
+        "sleep": sleep,
+        "hrv": hrv,
+        "body_battery": body_battery,
+        "training_readiness": training_readiness,
+    }
 
-    sleep_score = deep_find_number(sleep, {"overallscore", "sleepscore", "score"})
-    sleep_minutes = deep_find_number(
-        sleep,
-        {"sleepduration", "sleepdurationseconds", "totalsleeptimeinseconds", "durationinseconds"},
-    )
-    if isinstance(sleep_minutes, (int, float)) and sleep_minutes > 24 * 60:
-        sleep_minutes = round(sleep_minutes / 60)
+    sleep_seconds = first_number(mapped_payload, FIELD_MAPPINGS["sleep_duration_minutes"])
+    sleep_minutes = round(sleep_seconds / 60) if isinstance(sleep_seconds, (int, float)) else None
+    recovery_time = first_number(mapped_payload, FIELD_MAPPINGS["recovery_time_hours"])
+    recovery_time_hours = round(recovery_time / 3600, 2) if isinstance(recovery_time, (int, float)) else None
 
     return {
         "provider": "garmin",
         "source_tool": "python-garminconnect",
         "metric_date": raw["date"],
-        "sleep_score": sleep_score,
+        "sleep_score": first_number(mapped_payload, FIELD_MAPPINGS["sleep_score"])
+        or deep_find_number(sleep, {"overallscore", "sleepscore", "score"}),
         "sleep_duration_minutes": sleep_minutes,
-        "hrv_status": deep_find_string(hrv, {"hrvstatus", "status"}),
-        "resting_heart_rate": deep_find_number(stats, {"restingheartrate", "restinghr"}),
-        "body_battery": body_battery_last_value(body_battery)
+        "hrv_status": first_string(mapped_payload, FIELD_MAPPINGS["hrv_status"])
+        or deep_find_string(hrv, {"hrvstatus", "status"}),
+        "resting_heart_rate": first_number(mapped_payload, FIELD_MAPPINGS["resting_heart_rate"])
+        or deep_find_number(stats, {"restingheartrate", "restinghr"}),
+        "body_battery": first_number(mapped_payload, FIELD_MAPPINGS["body_battery"][:1])
+        or body_battery_last_value(body_battery)
         or deep_find_number(body_battery, {"bodybattery", "charged", "level"}),
-        "stress_score": deep_find_number(stats, {"averagestresslevel", "stressscore"}),
-        "training_readiness": deep_find_number(training_readiness, {"score", "trainingreadinessscore"}),
-        "recovery_time_hours": deep_find_number(stats, {"recoverytime", "recoverytimehours"}),
-        "steps": deep_find_number(stats, {"totalsteps", "steps"}),
-        "calories": deep_find_number(stats, {"totalcalories", "calories"}),
+        "stress_score": first_number(mapped_payload, FIELD_MAPPINGS["stress_score"])
+        or deep_find_number(stats, {"averagestresslevel", "stressscore"}),
+        "training_readiness": first_number(mapped_payload, FIELD_MAPPINGS["training_readiness"])
+        or deep_find_number(training_readiness, {"score", "trainingreadinessscore"}),
+        "recovery_time_hours": recovery_time_hours,
+        "steps": first_number(mapped_payload, FIELD_MAPPINGS["steps"])
+        or deep_find_number(stats, {"totalsteps", "steps"}),
+        "calories": first_number(mapped_payload, FIELD_MAPPINGS["calories"])
+        or deep_find_number(stats, {"totalcalories", "calories"}),
         "raw_available": {
             "stats": raw["stats"].get("ok", False),
             "sleep": raw["sleep"].get("ok", False),
@@ -323,6 +430,23 @@ def build_schema_summary(raw_days: list[dict[str, Any]]) -> dict[str, Any]:
     return summary
 
 
+def build_mapping_coverage(normalized: list[dict[str, Any]]) -> dict[str, Any]:
+    coverage = {
+        field: {
+            "filled": sum(1 for day in normalized if day.get(field) is not None),
+            "total": len(normalized),
+            "candidate_paths": FIELD_MAPPINGS.get(field, []),
+        }
+        for field in NORMALIZED_FIELDS
+    }
+    return {
+        "description": "Coverage report for Garmin raw-to-TrainingOS field mapping.",
+        "records": len(normalized),
+        "dates": [day.get("metric_date") for day in normalized],
+        "fields": coverage,
+    }
+
+
 def main() -> int:
     args = parse_args()
     client = login(args.email, args.password, args.tokenstore)
@@ -332,6 +456,7 @@ def main() -> int:
     NORMALIZED_DIR.mkdir(parents=True, exist_ok=True)
     write_json(NORMALIZED_DIR / "daily_recovery_metrics.json", normalized)
     write_json(NORMALIZED_DIR / "raw_schema_summary.json", build_schema_summary(raw_days))
+    write_json(NORMALIZED_DIR / "mapping_coverage.json", build_mapping_coverage(normalized))
 
     if args.include_raw:
         write_json(RAW_DIR / f"daily_raw_{args.end_date}_{args.days}d.json", raw_days)
@@ -339,6 +464,7 @@ def main() -> int:
     print(f"Wrote {len(normalized)} normalized Garmin daily records.")
     print(f"Output: {NORMALIZED_DIR / 'daily_recovery_metrics.json'}")
     print(f"Schema summary: {NORMALIZED_DIR / 'raw_schema_summary.json'}")
+    print(f"Mapping coverage: {NORMALIZED_DIR / 'mapping_coverage.json'}")
     if args.include_raw:
         print(f"Raw output: {RAW_DIR}")
     return 0

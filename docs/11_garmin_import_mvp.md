@@ -10,6 +10,7 @@ This MVP tests whether TrainingOS can log in to Garmin Connect, fetch recent dai
 - `requirements.txt`: Python dependency list.
 - `exports/garmin/normalized/daily_recovery_metrics.json`: generated normalized output, ignored by Git.
 - `exports/garmin/normalized/raw_schema_summary.json`: generated field-path/type summary, ignored by Git.
+- `exports/garmin/normalized/mapping_coverage.json`: generated field mapping coverage report, ignored by Git.
 - `exports/garmin/raw/`: optional raw output, ignored by Git.
 - `tokens/garmin/`: local Garmin OAuth token cache, ignored by Git.
 
@@ -119,6 +120,14 @@ exports/garmin/normalized/raw_schema_summary.json
 
 This file contains field names and types only. It intentionally omits health values so it is safer for field-mapping work.
 
+The importer also writes:
+
+```text
+exports/garmin/normalized/mapping_coverage.json
+```
+
+Use this to confirm which normalized TrainingOS fields were populated.
+
 ## First Test Checklist
 
 ```text
@@ -128,6 +137,7 @@ MFA prompt:
 7-day import:
 Normalized JSON created:
 Schema summary created:
+Mapping coverage created:
 Metrics populated:
 Failures observed:
 Next fix:
