@@ -5,6 +5,7 @@
 __pycache__/
 .pycache/
 .venv/
+.venv-garmin/
 node_modules/
 dist/
 build/
@@ -20,3 +21,6 @@ tokens/
 *.tcx
 *.sqlite
 *.db
+
+# Local Garmin API responses may include profile/device identifiers
+artifacts/garmin_push_result_*.json
