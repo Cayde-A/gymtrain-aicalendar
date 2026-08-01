@@ -45,6 +45,33 @@ V4 should be treated as the first testable operating model:
 4. AI reviews session data and recommends the next adjustment.
 5. Garmin data is considered recovery context, initially manual or exported.
 
+## MVP Garmin Usage Flow
+
+The current MVP uses Garmin as the workout execution surface and TrainingOS as the planning and analysis layer.
+
+Recommended flow:
+
+1. TrainingOS generates a planned strength workout from recent training history and recovery context.
+2. The workout is sent or recreated in Garmin Connect and synced to the watch.
+3. On the watch, open the planned workout from the training calendar:
+
+```text
+Watch face
+-> START
+-> Strength
+-> Hold MENU
+-> Training
+-> Training Calendar
+-> Select planned workout
+-> Do Workout
+```
+
+4. During training, use Garmin's built-in Strength activity to record sets, reps, weight, and rest.
+5. After saving the workout, let Garmin Connect sync the completed activity.
+6. TrainingOS imports or reconciles the Garmin activity, then AI reviews the result and prepares the next training recommendation.
+
+Do not store personal Garmin credentials, OAuth tokens, raw health exports, device identifiers, or private workout results in Git.
+
 ## Running tests
 
 Unit tests are located in `tests/`.
