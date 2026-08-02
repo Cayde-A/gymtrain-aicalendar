@@ -11,10 +11,11 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from . import garmin_import, trainingos_db
+    from . import garmin_import, trainingos_db, trainingos_observability
 except ImportError:  # pragma: no cover - supports direct script execution.
     import garmin_import  # type: ignore
     import trainingos_db  # type: ignore
+    import trainingos_observability  # type: ignore
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -216,18 +217,48 @@ def main() -> int:
     args = parse_args()
     end = dt.date.fromisoformat(args.end_date)
     start = end - dt.timedelta(days=max(args.days - 1, 0))
+    trainingos_observability.record_event(
+        "garmin_activity_import_started",
+        details={
+            "start_date": start.isoformat(),
+            "end_date": end.isoformat(),
+            "limit": args.limit,
+            "activity_type": args.activity_type,
+            "strength_only": args.strength_only,
+        },
+    )
+    print(f"TrainingOS import: logging in and reading Garmin activities from {start.isoformat()} to {end.isoformat()}.")
     client = garmin_import.login(args.email, args.password, args.tokenstore)
+    trainingos_observability.record_event("garmin_login_completed")
     activities = fetch_activities(client, start.isoformat(), end.isoformat(), args.activity_type)
+    fetched_count = len(activities)
     if args.strength_only:
         activities = [activity for activity in activities if is_strength_activity(activity)]
+    filtered_count = len(activities)
     activities = activities[: args.limit]
+    trainingos_observability.record_event(
+        "garmin_activities_fetched",
+        details={
+            "fetched_count": fetched_count,
+            "filtered_count": filtered_count,
+            "selected_count": len(activities),
+        },
+    )
+    print(f"TrainingOS import: fetched {fetched_count}, selected {len(activities)} for local import.")
 
     trainingos_db.init_db(Path(args.db))
     imported: list[dict[str, Any]] = []
     with trainingos_db.connect(Path(args.db)) as connection:
         for activity in activities:
-            payload = fetch_activity_payload(client, activity)
             external_id = activity_id(activity) or trainingos_db.new_id("activity")
+            trainingos_observability.record_event(
+                "garmin_activity_payload_fetch_started",
+                details={
+                    "external_activity_id": external_id,
+                    "activity_name": activity.get("activityName"),
+                },
+            )
+            payload = fetch_activity_payload(client, activity)
             raw_path = None
             if args.include_raw:
                 raw_path_obj = RAW_ACTIVITY_DIR / f"activity_{external_id}.json"
@@ -237,8 +268,21 @@ def main() -> int:
             session_id = trainingos_db.save_imported_workout(connection, normalized)
             normalized["local_session_id"] = session_id
             imported.append(normalized)
+            trainingos_observability.record_event(
+                "garmin_activity_imported",
+                details={
+                    "external_activity_id": external_id,
+                    "local_session_id": session_id,
+                    "activity_name": normalized.get("activity_name"),
+                    "set_count": len(normalized.get("sets", [])),
+                },
+            )
 
     write_json(NORMALIZED_ACTIVITY_DIR / "completed_activities.json", imported)
+    trainingos_observability.record_event(
+        "garmin_activity_import_completed",
+        details={"imported_count": len(imported), "db_path": args.db},
+    )
     print(f"Imported {len(imported)} Garmin completed activities into local SQLite.")
     print(f"Database: {args.db}")
     print(f"Normalized output: {NORMALIZED_ACTIVITY_DIR / 'completed_activities.json'}")

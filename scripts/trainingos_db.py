@@ -17,6 +17,11 @@ DEFAULT_DB_PATH = ROOT / "data" / "trainingos.sqlite"
 SCHEMA_PATH = ROOT / "schema" / "local_sqlite.sql"
 DEFAULT_ATHLETE_ID = "local-athlete"
 
+try:
+    from . import trainingos_observability
+except ImportError:  # pragma: no cover - supports direct script execution.
+    import trainingos_observability  # type: ignore
+
 
 def connect(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -30,6 +35,10 @@ def init_db(db_path: Path = DEFAULT_DB_PATH) -> None:
     with connect(db_path) as connection:
         connection.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
         ensure_default_athlete(connection)
+    trainingos_observability.record_event(
+        "local_db_initialized",
+        details={"db_path": str(db_path)},
+    )
 
 
 def ensure_default_athlete(connection: sqlite3.Connection) -> str:
@@ -194,6 +203,16 @@ def save_imported_workout(
     ensure_default_athlete(connection)
     session_id = upsert_completed_session(connection, workout, athlete_id)
     replace_set_logs(connection, session_id, workout.get("sets", []))
+    trainingos_observability.record_event(
+        "workout_saved",
+        details={
+            "session_id": session_id,
+            "provider": workout.get("provider"),
+            "external_activity_id": workout.get("external_activity_id"),
+            "activity_name": workout.get("activity_name"),
+            "set_count": len(workout.get("sets", [])),
+        },
+    )
     return session_id
 
 
@@ -255,6 +274,15 @@ def update_review_payload(
         ),
     )
     replace_set_logs(connection, session_id, payload.get("sets", []))
+    trainingos_observability.record_event(
+        "review_saved",
+        details={
+            "session_id": session_id,
+            "set_count": len(payload.get("sets", [])),
+            "has_pain_notes": bool(payload.get("pain_notes")),
+            "has_readiness_notes": bool(payload.get("readiness_notes")),
+        },
+    )
 
 
 def build_ai_review_summary(connection: sqlite3.Connection, session_id: str) -> dict[str, Any]:
@@ -275,7 +303,7 @@ def build_ai_review_summary(connection: sqlite3.Connection, session_id: str) -> 
                 "notes": set_log["notes"],
             }
         )
-    return {
+    result = {
         "session": {
             "id": session["id"],
             "completed_at": session["completed_at"],
@@ -288,6 +316,11 @@ def build_ai_review_summary(connection: sqlite3.Connection, session_id: str) -> 
         },
         "sets": summary_sets,
     }
+    trainingos_observability.record_event(
+        "ai_summary_built",
+        details={"session_id": session_id, "set_count": len(summary_sets)},
+    )
+    return result
 
 
 def parse_args() -> argparse.Namespace:

@@ -121,6 +121,14 @@ http://127.0.0.1:8787
 
 The correction page is for post-workout review. It lets the user correct exercise names, set order, weight, reps, RPE, pain notes, and readiness notes before AI analysis.
 
+During debugging, open:
+
+```text
+http://127.0.0.1:8787/debug
+```
+
+This shows local-only import and review events from `data/debug_events.jsonl`.
+
 ## Running tests
 
 Unit tests are located in `tests/`.

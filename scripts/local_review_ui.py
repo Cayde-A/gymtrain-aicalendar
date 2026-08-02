@@ -11,9 +11,10 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 try:
-    from . import trainingos_db
+    from . import trainingos_db, trainingos_observability
 except ImportError:  # pragma: no cover - supports direct script execution.
     import trainingos_db  # type: ignore
+    import trainingos_observability  # type: ignore
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +39,10 @@ def page(title: str, body: str) -> str:
     input, textarea {{ box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 15px; background: white; }}
     textarea {{ min-height: 70px; }}
     button {{ padding: 10px 14px; border: 0; border-radius: 6px; background: #2563eb; color: white; font-weight: 700; cursor: pointer; }}
+    pre {{ white-space: pre-wrap; background: #111827; color: #e5e7eb; padding: 14px; border-radius: 8px; overflow-x: auto; }}
+    nav {{ display: flex; gap: 14px; margin: 0 0 18px; }}
+    nav a {{ font-weight: 700; }}
+    .badge {{ display: inline-block; padding: 3px 8px; border-radius: 999px; background: #e5e7eb; color: #374151; font-size: 12px; }}
     .muted {{ color: #6b7280; }}
     .row-actions {{ display: flex; gap: 8px; align-items: center; margin-top: 16px; }}
     .summary {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 12px 0 22px; }}
@@ -87,7 +92,7 @@ class ReviewServer:
                   <td><a href="/session?id={safe(session.get("id"))}">校正</a></td>
                 </tr>"""
             )
-        body = """<h1>TrainingOS 训练校正</h1>"""
+        body = """<nav><a href="/">训练校正</a><a href="/debug">调试观测</a></nav><h1>TrainingOS 训练校正</h1>"""
         if rows:
             body += f"""<table>
               <thead><tr><th>完成时间</th><th>训练</th><th>来源</th><th></th></tr></thead>
@@ -129,7 +134,8 @@ class ReviewServer:
                 </tr>"""
             )
         saved_notice = "<p class='muted'>已保存校正。</p>" if saved else ""
-        body = f"""<p><a href="/">返回列表</a></p>
+        body = f"""<nav><a href="/">训练校正</a><a href="/debug">调试观测</a></nav>
+        <p><a href="/">返回列表</a></p>
         <h1>{safe(session.get("activity_name") or "Completed Workout")}</h1>
         {saved_notice}
         <form method="post" action="/save">
@@ -158,6 +164,32 @@ class ReviewServer:
         </form>"""
         return page("TrainingOS Review", body)
 
+    def debug_page(self) -> str:
+        events = trainingos_observability.read_events(100)
+        rows = []
+        for event in reversed(events):
+            rows.append(
+                f"""<tr>
+                  <td>{safe(event.get("time"))}</td>
+                  <td><span class="badge">{safe(event.get("status"))}</span></td>
+                  <td>{safe(event.get("event"))}</td>
+                  <td><pre>{safe(json.dumps(event.get("details", {}), ensure_ascii=False, indent=2))}</pre></td>
+                </tr>"""
+            )
+        body = """<nav><a href="/">训练校正</a><a href="/debug">调试观测</a></nav>
+        <h1>调试观测</h1>
+        <p class="muted">这里显示本机调试事件：Garmin 导入、写入 SQLite、保存校正、生成 AI 摘要。日志位于本机 data/debug_events.jsonl，已被 Git 忽略。</p>
+        <form method="post" action="/debug/clear"><button type="submit">清空调试日志</button></form>
+        """
+        if rows:
+            body += f"""<table>
+              <thead><tr><th>时间</th><th>状态</th><th>事件</th><th>细节</th></tr></thead>
+              <tbody>{''.join(rows)}</tbody>
+            </table>"""
+        else:
+            body += "<div class='empty'>暂无调试事件。运行导入或保存一次校正后会显示。</div>"
+        return page("TrainingOS Debug", body)
+
     def summary_page(self, session_id: str) -> str:
         with self.connection() as connection:
             try:
@@ -167,7 +199,7 @@ class ReviewServer:
         payload = html.escape(json.dumps(summary, indent=2, ensure_ascii=False))
         return page(
             "TrainingOS AI Summary",
-            f"<p><a href='/session?id={safe(session_id)}'>返回校正</a></p><h1>AI 输入摘要</h1><pre>{payload}</pre>",
+            f"<nav><a href='/'>训练校正</a><a href='/debug'>调试观测</a></nav><p><a href='/session?id={safe(session_id)}'>返回校正</a></p><h1>AI 输入摘要</h1><pre>{payload}</pre>",
         )
 
     def save(self, form_data: dict[str, list[str]]) -> str:
@@ -233,9 +265,16 @@ def make_handler(app: ReviewServer):
             if parsed.path == "/summary":
                 self.respond(app.summary_page(query.get("id", [""])[0]))
                 return
+            if parsed.path == "/debug":
+                self.respond(app.debug_page())
+                return
             self.send_error(404)
 
         def do_POST(self) -> None:
+            if self.path == "/debug/clear":
+                trainingos_observability.clear_events()
+                self.respond(app.debug_page())
+                return
             if self.path != "/save":
                 self.send_error(404)
                 return
