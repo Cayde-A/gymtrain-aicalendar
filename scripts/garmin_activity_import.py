@@ -22,6 +22,23 @@ ROOT = Path(__file__).resolve().parents[1]
 RAW_ACTIVITY_DIR = ROOT / "exports" / "garmin" / "raw" / "activities"
 NORMALIZED_ACTIVITY_DIR = ROOT / "exports" / "garmin" / "normalized"
 DEFAULT_V03_TOKENSTORE = ROOT / "tokens" / "garmin-v03"
+SET_FIELD_MAPPINGS = {
+    "exercise_name": ["exerciseName", "exercise", "name", "exercises[].category"],
+    "set_order": ["setOrder", "orderNumber", "setNumber"],
+    "set_type": ["setType", "type"],
+    "weight_kg": ["weight", "weightKg", "weightInKg", "weightKilograms"],
+    "reps": ["reps", "repetitions", "repCount", "repetitionCount"],
+    "rpe": ["rpe", "ratingOfPerceivedExertion"],
+}
+ACTIVITY_FIELD_MAPPINGS = {
+    "external_activity_id": ["activityId", "activity_id", "id"],
+    "activity_name": ["activityName", "activity_name", "name"],
+    "started_at": ["startTimeLocal", "startTimeGMT", "startTime"],
+    "duration_seconds": ["duration", "durationSeconds", "elapsedDuration"],
+    "average_heart_rate": ["averageHR", "averageHeartRate", "avgHR"],
+    "max_heart_rate": ["maxHR", "maxHeartRate"],
+    "calories": ["calories", "caloriesConsumed", "activeKilocalories"],
+}
 
 
 def default_tokenstore() -> str:
@@ -166,6 +183,31 @@ def normalize_weight_kg(value: float | int | None) -> float | int | None:
     return value
 
 
+def mapped_names(field: str) -> set[str]:
+    names = SET_FIELD_MAPPINGS[field]
+    return {name.lower().replace("_", "").replace("-", "").replace("[].", "") for name in names}
+
+
+def mapped_activity_names(field: str) -> set[str]:
+    names = ACTIVITY_FIELD_MAPPINGS[field]
+    return {name.lower().replace("_", "").replace("-", "") for name in names}
+
+
+def normalize_set_log(item: dict[str, Any], fallback_name: str | None, index: int) -> dict[str, Any]:
+    weight = first_number(item, mapped_names("weight_kg"))
+    reps = first_number(item, mapped_names("reps"))
+    return {
+        "exercise_name": exercise_name_from_set(item, fallback_name),
+        "set_order": int(first_number(item, mapped_names("set_order")) or index),
+        "set_type": first_string(item, mapped_names("set_type")) or "working",
+        "weight_kg": normalize_weight_kg(weight),
+        "reps": int(reps) if isinstance(reps, (int, float)) else None,
+        "rpe": first_number(item, mapped_names("rpe")),
+        "is_top_set": False,
+        "notes": None,
+    }
+
+
 def extract_sets(exercise_sets: Any, fallback_name: str | None) -> list[dict[str, Any]]:
     if isinstance(exercise_sets, dict):
         candidates = (
@@ -183,23 +225,7 @@ def extract_sets(exercise_sets: Any, fallback_name: str | None) -> list[dict[str
     for index, item in enumerate(candidates, start=1):
         if not isinstance(item, dict):
             continue
-        exercise_name = exercise_name_from_set(item, fallback_name)
-        weight = first_number(item, {"weight", "weightkg", "weightinkg", "weightkilograms"})
-        reps = first_number(item, {"reps", "repetitions", "repcount", "repetitioncount"})
-        rpe = first_number(item, {"rpe", "ratingofperceivedexertion"})
-        set_type = first_string(item, {"settype", "type"}) or "working"
-        normalized.append(
-            {
-                "exercise_name": exercise_name,
-                "set_order": int(first_number(item, {"setorder", "ordernumber", "setnumber"}) or index),
-                "set_type": set_type,
-                "weight_kg": normalize_weight_kg(weight),
-                "reps": int(reps) if isinstance(reps, (int, float)) else None,
-                "rpe": rpe,
-                "is_top_set": False,
-                "notes": None,
-            }
-        )
+        normalized.append(normalize_set_log(item, fallback_name, index))
     return normalized
 
 
@@ -222,10 +248,10 @@ def normalize_activity(payload: dict[str, Any], raw_payload_path: str | None = N
         "completed_at": completed_at,
         "session_type": activity_type_key(summary),
         "activity_name": name,
-        "duration_seconds": first_number(merged, {"duration", "durationseconds", "elapsedduration"}),
-        "average_heart_rate": first_number(merged, {"averagehr", "averageheartrate", "avghr"}),
-        "max_heart_rate": first_number(merged, {"maxhr", "maxheartrate"}),
-        "calories": first_number(merged, {"calories", "caloriesconsumed", "activekilocalories"}),
+        "duration_seconds": first_number(merged, mapped_activity_names("duration_seconds")),
+        "average_heart_rate": first_number(merged, mapped_activity_names("average_heart_rate")),
+        "max_heart_rate": first_number(merged, mapped_activity_names("max_heart_rate")),
+        "calories": first_number(merged, mapped_activity_names("calories")),
         "raw_payload_path": raw_payload_path,
         "sets": sets,
     }

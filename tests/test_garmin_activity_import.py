@@ -53,10 +53,33 @@ class GarminActivityImportTestCase(unittest.TestCase):
     def test_extract_sets_returns_empty_when_unavailable(self):
         self.assertEqual(garmin_activity_import.extract_sets(None, "Strength"), [])
 
+    def test_normalize_set_log_uses_central_mapping(self):
+        normalized = garmin_activity_import.normalize_set_log(
+            {
+                "setNumber": 2,
+                "setType": "ACTIVE",
+                "weight": 108000,
+                "repetitionCount": 10,
+                "exercises": [{"category": "SIT_UP"}],
+            },
+            "Strength",
+            1,
+        )
+        self.assertEqual(normalized["exercise_name"], "SIT_UP")
+        self.assertEqual(normalized["set_order"], 2)
+        self.assertEqual(normalized["set_type"], "ACTIVE")
+        self.assertEqual(normalized["weight_kg"], 108)
+        self.assertEqual(normalized["reps"], 10)
+
     def test_normalize_weight_keeps_small_values_and_converts_grams(self):
         self.assertEqual(garmin_activity_import.normalize_weight_kg(108000), 108)
         self.assertEqual(garmin_activity_import.normalize_weight_kg(108), 108)
         self.assertIsNone(garmin_activity_import.normalize_weight_kg(None))
+
+    def test_mapping_tables_include_known_garmin_fields(self):
+        self.assertIn("repetitionCount", garmin_activity_import.SET_FIELD_MAPPINGS["reps"])
+        self.assertIn("weight", garmin_activity_import.SET_FIELD_MAPPINGS["weight_kg"])
+        self.assertIn("averageHR", garmin_activity_import.ACTIVITY_FIELD_MAPPINGS["average_heart_rate"])
 
 
 if __name__ == "__main__":

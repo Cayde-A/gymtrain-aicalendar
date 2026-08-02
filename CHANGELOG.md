@@ -9,6 +9,7 @@
 - Added local SQLite storage helpers, completed Garmin activity import MVP, and local workout correction UI.
 - Added local debug event timeline for observing Garmin import, SQLite writes, correction saves, and AI summary generation.
 - Fixed Garmin completed-set parsing for `repetitionCount` and gram-based weight values.
+- Documented completed activity and strength set field mappings, and centralized Garmin activity/set mapping rules in code.
 - Added Garmin retry test result documenting Garmin SSO `429 Too Many Requests` state.
 - Clarified that the next valid test is one token-initialization run after rate limit clears.
 - Added successful Garmin import test result with token initialization and partial normalized metrics.
