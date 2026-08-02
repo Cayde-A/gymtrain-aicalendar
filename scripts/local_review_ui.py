@@ -82,26 +82,54 @@ class ReviewServer:
 
     def list_page(self) -> str:
         with self.connection() as connection:
-            sessions = trainingos_db.get_recent_sessions(connection, 20)
+            training_days = trainingos_db.get_recent_training_days(connection, 20)
+        rows = []
+        for training_day in training_days:
+            rows.append(
+                f"""<tr>
+                  <td>{safe(training_day.get("training_date"))}</td>
+                  <td>{safe(training_day.get("session_count"))}</td>
+                  <td>{safe(training_day.get("activity_names"))}</td>
+                  <td><a href="/day?date={safe(training_day.get("training_date"))}">查看当天</a></td>
+                </tr>"""
+            )
+        body = """<nav><a href="/">训练日</a><a href="/debug">调试观测</a></nav><h1>TrainingOS 训练日</h1>"""
+        if rows:
+            body += f"""<table>
+              <thead><tr><th>日期</th><th>活动数</th><th>训练内容</th><th></th></tr></thead>
+              <tbody>{''.join(rows)}</tbody>
+            </table>"""
+        else:
+            body += """<div class="empty">还没有已导入的训练。先运行 Garmin 完成活动导入，或稍后添加手动录入入口。</div>"""
+        return page("TrainingOS Review", body)
+
+    def day_page(self, training_date: str) -> str:
+        with self.connection() as connection:
+            sessions = trainingos_db.get_sessions_for_day(connection, training_date)
+        if not sessions:
+            return page("Not found", "<h1>找不到训练日</h1><p><a href='/'>返回</a></p>")
         rows = []
         for session in sessions:
             rows.append(
                 f"""<tr>
                   <td>{safe(session.get("completed_at"))}</td>
                   <td>{safe(session.get("activity_name") or session.get("session_type"))}</td>
-                  <td>{safe(session.get("provider"))}</td>
-                  <td><a href="/session?id={safe(session.get("id"))}">校正</a></td>
+                  <td>{safe(len(session.get("sets", [])))}</td>
+                  <td><a href="/session?id={safe(session.get("id"))}">校正单条</a></td>
                 </tr>"""
             )
-        body = """<nav><a href="/">训练校正</a><a href="/debug">调试观测</a></nav><h1>TrainingOS 训练校正</h1>"""
-        if rows:
-            body += f"""<table>
-              <thead><tr><th>完成时间</th><th>训练</th><th>来源</th><th></th></tr></thead>
-              <tbody>{''.join(rows)}</tbody>
-            </table>"""
-        else:
-            body += """<div class="empty">还没有已导入的训练。先运行 Garmin 完成活动导入，或稍后添加手动录入入口。</div>"""
-        return page("TrainingOS Review", body)
+        body = f"""<nav><a href="/">训练日</a><a href="/debug">调试观测</a></nav>
+        <p><a href="/">返回训练日</a></p>
+        <h1>{safe(training_date)} 训练</h1>
+        <p class="muted">同一天的 Garmin 活动会作为同一组训练进入 AI 复盘。</p>
+        <table>
+          <thead><tr><th>时间</th><th>活动</th><th>组数</th><th></th></tr></thead>
+          <tbody>{''.join(rows)}</tbody>
+        </table>
+        <div class="row-actions">
+          <a href="/day/analysis?date={safe(training_date)}">进入当天 AI 复盘与初版计划</a>
+        </div>"""
+        return page("TrainingOS Day Review", body)
 
     def session_page(self, session_id: str, saved: bool = False) -> str:
         with self.connection() as connection:
@@ -246,6 +274,48 @@ class ReviewServer:
         </form>"""
         return page("TrainingOS AI Analysis", body)
 
+    def day_analysis_page(self, training_date: str) -> str:
+        with self.connection() as connection:
+            try:
+                prompt = trainingos_db.build_day_post_workout_analysis_prompt(connection, training_date)
+                packet = trainingos_db.build_day_ai_review_packet(connection, training_date)
+                reviews = trainingos_db.get_ai_reviews_for_day(connection, training_date)
+            except ValueError:
+                return page("Not found", "<h1>找不到训练日</h1><p><a href='/'>返回</a></p>")
+        trainingos_observability.record_event(
+            "manual_ai_day_analysis_opened",
+            details={"training_date": training_date},
+        )
+        packet_text = json.dumps(packet, indent=2, ensure_ascii=False)
+        review_rows = ""
+        if reviews:
+            review_rows = "<h2>已保存当天复盘</h2><table><thead><tr><th>时间</th><th>决策</th><th>摘要</th></tr></thead><tbody>"
+            for review in reviews:
+                review_rows += (
+                    f"<tr><td>{safe(review.get('created_at'))}</td>"
+                    f"<td>{safe(review.get('decision'))}</td>"
+                    f"<td>{safe(review.get('summary'))}</td></tr>"
+                )
+            review_rows += "</tbody></table>"
+        body = f"""<nav><a href="/">训练日</a><a href="/debug">调试观测</a></nav>
+        <p><a href="/day?date={safe(training_date)}">返回当天训练</a></p>
+        <h1>{safe(training_date)} AI 复盘与初版计划</h1>
+        <p class="muted">这是当天聚合复盘。同一天的多条 Garmin 活动会作为一个训练整体进入标准 AI 输入包。</p>
+        {review_rows}
+        <h2>标准 AI 输入</h2>
+        <textarea readonly style="min-height: 300px">{safe(packet_text)}</textarea>
+        <h2>简短指令</h2>
+        <textarea readonly style="min-height: 220px">{safe(prompt)}</textarea>
+        <h2>粘贴 AI 输出</h2>
+        <form method="post" action="/day/analysis/save">
+          <input type="hidden" name="training_date" value="{safe(training_date)}">
+          <textarea name="ai_response" style="min-height: 260px" placeholder="在这里粘贴 ChatGPT 返回的 JSON"></textarea>
+          <div class="row-actions">
+            <button type="submit">保存当天 AI 复盘</button>
+          </div>
+        </form>"""
+        return page("TrainingOS Day AI Analysis", body)
+
     def save_ai_analysis(self, form_data: dict[str, list[str]]) -> str:
         session_id = form_data.get("session_id", [""])[0]
         response_text = form_data.get("ai_response", [""])[0]
@@ -254,6 +324,16 @@ class ReviewServer:
         with self.connection() as connection:
             trainingos_db.save_ai_review_response(connection, session_id, response_text)
         return self.analysis_page(session_id)
+
+    def save_day_ai_analysis(self, form_data: dict[str, list[str]]) -> str:
+        training_date = form_data.get("training_date", [""])[0]
+        response_text = form_data.get("ai_response", [""])[0]
+        if not training_date or not response_text.strip():
+            return page("Missing AI response", "<h1>缺少 AI 输出</h1><p><a href='/'>返回</a></p>")
+        with self.connection() as connection:
+            trainingos_db.save_day_ai_review_response(connection, training_date, response_text)
+        return self.day_analysis_page(training_date)
+
 
     def save(self, form_data: dict[str, list[str]]) -> str:
         session_id = form_data.get("session_id", [""])[0]
@@ -317,11 +397,17 @@ def make_handler(app: ReviewServer):
             if parsed.path == "/session":
                 self.respond(app.session_page(query.get("id", [""])[0]))
                 return
+            if parsed.path == "/day":
+                self.respond(app.day_page(query.get("date", [""])[0]))
+                return
             if parsed.path == "/summary":
                 self.respond(app.summary_page(query.get("id", [""])[0]))
                 return
             if parsed.path == "/analysis":
                 self.respond(app.analysis_page(query.get("id", [""])[0]))
+                return
+            if parsed.path == "/day/analysis":
+                self.respond(app.day_analysis_page(query.get("date", [""])[0]))
                 return
             if parsed.path == "/debug":
                 self.respond(app.debug_page())
@@ -337,6 +423,11 @@ def make_handler(app: ReviewServer):
                 length = int(self.headers.get("Content-Length", "0"))
                 body = self.rfile.read(length).decode("utf-8")
                 self.respond(app.save_ai_analysis(parse_qs(body)))
+                return
+            if self.path == "/day/analysis/save":
+                length = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(length).decode("utf-8")
+                self.respond(app.save_day_ai_analysis(parse_qs(body)))
                 return
             if self.path != "/save":
                 self.send_error(404)

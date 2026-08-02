@@ -126,7 +126,8 @@ After correction, use `保存并进入 AI 复盘与初版计划` to open the man
 The AI review flow is standardized to reduce compute:
 
 ```text
-TrainingOS builds a compact JSON packet
+TrainingOS groups same-day Garmin activities into one training day
+-> TrainingOS builds a compact JSON packet
 -> user sends packet to ChatGPT
 -> ChatGPT returns JSON only
 -> user pastes JSON back into TrainingOS

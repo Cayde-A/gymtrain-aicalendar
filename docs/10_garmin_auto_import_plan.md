@@ -353,6 +353,14 @@ build_ai_review_packet()
 -> ai_reviews
 ```
 
+For AI review, same-day Garmin activities should be grouped as one training day:
+
+```text
+completed_sessions where date(completed_at) = training_date
+-> day-level compact packet
+-> one AI review for the training day
+```
+
 The AI response should be JSON only and include:
 
 - `analysis_summary`;

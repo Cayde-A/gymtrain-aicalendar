@@ -229,6 +229,47 @@ def get_recent_sessions(connection: sqlite3.Connection, limit: int = 10) -> list
     return [dict(row) for row in rows]
 
 
+def training_date_from_completed_at(value: str | None) -> str:
+    return (value or "")[:10]
+
+
+def get_recent_training_days(connection: sqlite3.Connection, limit: int = 20) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        """
+        select
+          substr(completed_at, 1, 10) as training_date,
+          count(*) as session_count,
+          min(completed_at) as first_completed_at,
+          max(completed_at) as last_completed_at,
+          group_concat(coalesce(activity_name, session_type), ' / ') as activity_names
+        from completed_sessions
+        group by substr(completed_at, 1, 10)
+        order by training_date desc
+        limit ?
+        """,
+        (limit,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_sessions_for_day(connection: sqlite3.Connection, training_date: str) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        """
+        select id
+        from completed_sessions
+        where substr(completed_at, 1, 10) = ?
+        order by completed_at
+        """,
+        (training_date,),
+    ).fetchall()
+    sessions: list[dict[str, Any]] = []
+    for row in rows:
+        session = get_session_for_review(connection, str(row["id"]))
+        if session is not None:
+            sessions.append(session)
+    return sessions
+
+
 def get_session_for_review(connection: sqlite3.Connection, session_id: str) -> dict[str, Any] | None:
     session = connection.execute(
         "select * from completed_sessions where id = ?",
@@ -344,6 +385,25 @@ def session_metrics(summary: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def aggregate_day_metrics(sessions: list[dict[str, Any]]) -> dict[str, Any]:
+    all_sets = [set_log for session in sessions for set_log in session.get("sets", [])]
+    working_sets = [item for item in all_sets if item.get("weight_kg") is not None and item.get("reps") is not None]
+    total_volume = sum(float(item["weight_kg"]) * int(item["reps"]) for item in working_sets)
+    best_estimated_1rm = None
+    if working_sets:
+        best_estimated_1rm = max(item.get("estimated_1rm_kg") or 0 for item in working_sets)
+    return {
+        "session_count": len(sessions),
+        "set_count": len(all_sets),
+        "logged_working_set_count": len(working_sets),
+        "total_volume_kg": round(total_volume, 2),
+        "best_estimated_1rm_kg": round(best_estimated_1rm, 2) if best_estimated_1rm else None,
+        "missing_rpe_count": sum(1 for item in all_sets if item.get("rpe") is None),
+        "missing_reps_count": sum(1 for item in all_sets if item.get("reps") is None),
+        "missing_weight_count": sum(1 for item in all_sets if item.get("weight_kg") is None),
+    }
+
+
 def build_ai_review_packet(connection: sqlite3.Connection, session_id: str) -> dict[str, Any]:
     summary = build_ai_review_summary(connection, session_id)
     packet = {
@@ -389,6 +449,83 @@ def build_ai_review_packet(connection: sqlite3.Connection, session_id: str) -> d
     return packet
 
 
+def build_day_ai_review_packet(connection: sqlite3.Connection, training_date: str) -> dict[str, Any]:
+    sessions = get_sessions_for_day(connection, training_date)
+    if not sessions:
+        raise ValueError(f"Unknown training date: {training_date}")
+    packet_sessions = []
+    for session in sessions:
+        packet_sessions.append(
+            {
+                "session": {
+                    "id": session["id"],
+                    "completed_at": session["completed_at"],
+                    "session_type": session["session_type"],
+                    "activity_name": session["activity_name"],
+                    "overall_rpe": session["overall_rpe"],
+                    "fatigue_rating": session["fatigue_rating"],
+                    "pain_notes": session["pain_notes"],
+                    "readiness_notes": session["readiness_notes"],
+                },
+                "sets": [
+                    {
+                        "exercise": set_log["exercise_name"],
+                        "set_order": set_log["set_order"],
+                        "set_type": set_log["set_type"],
+                        "weight_kg": set_log["weight_kg"],
+                        "reps": set_log["reps"],
+                        "rpe": set_log["rpe"],
+                        "estimated_1rm_kg": set_log["estimated_1rm_kg"],
+                        "notes": set_log["notes"],
+                    }
+                    for set_log in session.get("sets", [])
+                ],
+            }
+        )
+    packet = {
+        "task": "post_workout_review_day_group_and_initial_next_day_draft",
+        "version": "trainingos.ai_review_day_packet.v1",
+        "training_date": training_date,
+        "constraints": {
+            "compute_budget": "low",
+            "use_only_packet_data": True,
+            "return_json_only": True,
+            "treat_same_day_sessions_as_one_workout": True,
+            "plan_status": "initial_draft",
+            "final_plan_requires_next_day_recovery": True,
+            "do_not_push_garmin_workout_from_initial_draft": True,
+        },
+        "required_output_schema": {
+            "analysis_summary": "string",
+            "performance_direction": "increase|keep|reduce|deload",
+            "risk_flags": ["string"],
+            "data_quality_issues": ["string"],
+            "initial_next_day_plan": {
+                "status": "initial_draft",
+                "session_type": "string",
+                "focus": ["string"],
+                "rounds": [
+                    {
+                        "exercise": "string",
+                        "sets": "integer",
+                        "reps": "string",
+                        "load_guidance": "string",
+                        "rpe_cap": "number|null",
+                    }
+                ],
+            },
+            "next_morning_adjustment_rules": ["string"],
+        },
+        "metrics": aggregate_day_metrics(sessions),
+        "sessions": packet_sessions,
+    }
+    trainingos_observability.record_event(
+        "ai_review_day_packet_built",
+        details={"training_date": training_date, "session_count": len(sessions)},
+    )
+    return packet
+
+
 def build_post_workout_analysis_prompt(connection: sqlite3.Connection, session_id: str) -> str:
     packet = build_ai_review_packet(connection, session_id)
     prompt_payload = json.dumps(packet, indent=2, ensure_ascii=False)
@@ -397,6 +534,30 @@ def build_post_workout_analysis_prompt(connection: sqlite3.Connection, session_i
 Use the standardized TrainingOS AI review packet below.
 
 Rules:
+- Use only the packet data.
+- Keep reasoning compact.
+- Return JSON only.
+- Generate an initial next-day plan draft.
+- Do not mark the draft as final.
+- The final plan must wait for next-day Garmin sleep, HRV, Body Battery, readiness, and recovery metrics.
+
+Packet:
+
+```json
+{prompt_payload}
+```
+"""
+
+
+def build_day_post_workout_analysis_prompt(connection: sqlite3.Connection, training_date: str) -> str:
+    packet = build_day_ai_review_packet(connection, training_date)
+    prompt_payload = json.dumps(packet, indent=2, ensure_ascii=False)
+    return f"""You are TrainingOS Coach Agent.
+
+Use the standardized TrainingOS same-day workout packet below.
+
+Rules:
+- Treat all sessions in the same training_date as one workout.
 - Use only the packet data.
 - Keep reasoning compact.
 - Return JSON only.
@@ -489,6 +650,59 @@ def save_ai_review_response(
     return review_id
 
 
+def save_day_ai_review_response(
+    connection: sqlite3.Connection,
+    training_date: str,
+    response_text: str,
+) -> str:
+    parsed = extract_json_object(response_text)
+    review_id = new_id("ai_review")
+    if parsed:
+        decision = str(parsed.get("performance_direction") or parsed.get("decision") or "keep")
+        summary = str(parsed.get("analysis_summary") or parsed.get("summary") or "")
+        risk_flags = parsed.get("risk_flags") or []
+        next_target = {
+            "training_date": training_date,
+            "initial_next_day_plan": parsed.get("initial_next_day_plan"),
+            "next_morning_adjustment_rules": parsed.get("next_morning_adjustment_rules"),
+            "data_quality_issues": parsed.get("data_quality_issues"),
+            "raw_json": parsed,
+        }
+    else:
+        decision = "manual_review"
+        summary = response_text.strip()
+        risk_flags = ["unstructured_ai_response"]
+        next_target = {"training_date": training_date, "raw_text": response_text}
+    connection.execute(
+        """
+        insert into ai_reviews (
+          id, completed_session_id, review_type, decision, summary,
+          next_target_json, risk_flags_json
+        )
+        values (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            review_id,
+            None,
+            "day_post_workout_initial_draft",
+            decision,
+            summary,
+            json.dumps(next_target, ensure_ascii=False, sort_keys=True),
+            json.dumps(risk_flags, ensure_ascii=False, sort_keys=True),
+        ),
+    )
+    trainingos_observability.record_event(
+        "ai_day_review_saved",
+        details={
+            "training_date": training_date,
+            "review_id": review_id,
+            "structured": bool(parsed),
+            "decision": decision,
+        },
+    )
+    return review_id
+
+
 def get_ai_reviews_for_session(connection: sqlite3.Connection, session_id: str) -> list[dict[str, Any]]:
     rows = connection.execute(
         """
@@ -498,6 +712,20 @@ def get_ai_reviews_for_session(connection: sqlite3.Connection, session_id: str) 
         order by created_at desc
         """,
         (session_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_ai_reviews_for_day(connection: sqlite3.Connection, training_date: str) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        """
+        select *
+        from ai_reviews
+        where review_type = 'day_post_workout_initial_draft'
+          and next_target_json like ?
+        order by created_at desc
+        """,
+        (f'%"training_date": "{training_date}"%',),
     ).fetchall()
     return [dict(row) for row in rows]
 

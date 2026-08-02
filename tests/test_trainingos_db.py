@@ -200,6 +200,76 @@ class TrainingOSDbTestCase(unittest.TestCase):
         self.assertEqual(reviews[0]["decision"], "manual_review")
         self.assertEqual(reviews[0]["summary"], "Plain analysis")
 
+    def test_same_day_sessions_are_grouped_for_ai_review(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "trainingos.sqlite"
+            trainingos_db.init_db(db_path)
+            with trainingos_db.connect(db_path) as connection:
+                trainingos_db.save_imported_workout(
+                    connection,
+                    {
+                        "provider": "garmin",
+                        "external_activity_id": "same-day-a",
+                        "completed_at": "2026-08-02 09:00:00",
+                        "session_type": "strength_training",
+                        "activity_name": "Strength A",
+                        "sets": [
+                            {
+                                "exercise_name": "Bench Press",
+                                "set_order": 1,
+                                "set_type": "working",
+                                "weight_kg": 100,
+                                "reps": 5,
+                            }
+                        ],
+                    },
+                )
+                trainingos_db.save_imported_workout(
+                    connection,
+                    {
+                        "provider": "garmin",
+                        "external_activity_id": "same-day-b",
+                        "completed_at": "2026-08-02 09:20:00",
+                        "session_type": "strength_training",
+                        "activity_name": "Strength B",
+                        "sets": [
+                            {
+                                "exercise_name": "Row",
+                                "set_order": 1,
+                                "set_type": "working",
+                                "weight_kg": 80,
+                                "reps": 8,
+                            }
+                        ],
+                    },
+                )
+                days = trainingos_db.get_recent_training_days(connection)
+                packet = trainingos_db.build_day_ai_review_packet(connection, "2026-08-02")
+                prompt = trainingos_db.build_day_post_workout_analysis_prompt(connection, "2026-08-02")
+        self.assertEqual(days[0]["training_date"], "2026-08-02")
+        self.assertEqual(days[0]["session_count"], 2)
+        self.assertEqual(packet["constraints"]["treat_same_day_sessions_as_one_workout"], True)
+        self.assertEqual(packet["metrics"]["session_count"], 2)
+        self.assertEqual(packet["metrics"]["set_count"], 2)
+        self.assertIn("Strength A", str(packet))
+        self.assertIn("Strength B", str(packet))
+        self.assertIn("Treat all sessions in the same training_date as one workout", prompt)
+
+    def test_save_day_ai_review_response_persists_day_review(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "trainingos.sqlite"
+            trainingos_db.init_db(db_path)
+            with trainingos_db.connect(db_path) as connection:
+                review_id = trainingos_db.save_day_ai_review_response(
+                    connection,
+                    "2026-08-02",
+                    '{"analysis_summary":"Day review","performance_direction":"increase","risk_flags":[]}',
+                )
+                reviews = trainingos_db.get_ai_reviews_for_day(connection, "2026-08-02")
+        self.assertTrue(review_id.startswith("ai_review_"))
+        self.assertEqual(reviews[0]["decision"], "increase")
+        self.assertEqual(reviews[0]["summary"], "Day review")
+
 
 if __name__ == "__main__":
     unittest.main()
