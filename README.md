@@ -91,6 +91,36 @@ GitHub
 
 The default sync strategy is monthly upload of minimized summaries, followed by cleanup of raw Garmin cache and temporary sync packages.
 
+## Local Review MVP
+
+Initialize the local private database:
+
+```bash
+python3 scripts/trainingos_db.py --init
+```
+
+Import recent completed Garmin Strength activities into local SQLite:
+
+```bash
+python3 scripts/garmin_activity_import.py --days 7 --limit 5
+```
+
+Add `--strength-only` when the activity list contains multiple sport types and only strength sessions should be imported.
+
+Open the local correction page:
+
+```bash
+python3 scripts/local_review_ui.py
+```
+
+Then visit:
+
+```text
+http://127.0.0.1:8787
+```
+
+The correction page is for post-workout review. It lets the user correct exercise names, set order, weight, reps, RPE, pain notes, and readiness notes before AI analysis.
+
 ## Running tests
 
 Unit tests are located in `tests/`.

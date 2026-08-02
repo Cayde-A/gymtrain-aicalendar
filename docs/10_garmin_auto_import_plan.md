@@ -266,6 +266,66 @@ Garmin raw activity
 -> clean TrainingOS workout record
 ```
 
+## Completed Activity Import MVP
+
+The local completed activity importer is:
+
+```text
+scripts/garmin_activity_import.py
+```
+
+It uses Garmin activity APIs in this order:
+
+```text
+get_activities_by_date
+-> get_activity / get_activity_details
+-> get_activity_exercise_sets
+-> normalize completed session
+-> write completed_sessions and set_logs to local SQLite
+```
+
+Recommended command:
+
+```bash
+python3 scripts/garmin_activity_import.py --days 7 --limit 5
+```
+
+Use `--strength-only` when the recent activity list includes multiple sport types and only strength sessions should be imported.
+
+By default, raw Garmin payloads are not saved. Use `--include-raw` only for local debugging, and never commit those files.
+
+## Correction UI MVP
+
+The local correction interface is:
+
+```text
+scripts/local_review_ui.py
+```
+
+Recommended command:
+
+```bash
+python3 scripts/local_review_ui.py
+```
+
+Open:
+
+```text
+http://127.0.0.1:8787
+```
+
+The correction page supports:
+
+- exercise name correction;
+- set order correction;
+- set type correction;
+- weight correction;
+- rep correction;
+- RPE entry;
+- pain and technique notes;
+- readiness notes;
+- AI review summary generation.
+
 ## Security Rules
 
 - Never commit `.env`.
