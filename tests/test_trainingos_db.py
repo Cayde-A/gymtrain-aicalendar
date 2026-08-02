@@ -111,11 +111,94 @@ class TrainingOSDbTestCase(unittest.TestCase):
                     },
                 )
                 prompt = trainingos_db.build_post_workout_analysis_prompt(connection, session_id)
-        self.assertIn("generate an initial next-day training plan", prompt)
+        self.assertIn("Generate an initial next-day plan draft", prompt)
         self.assertIn("initial_draft", prompt)
-        self.assertIn("Do not push a final Garmin workout", prompt)
+        self.assertIn("Return JSON only", prompt)
         self.assertIn("Garmin sleep, HRV, Body Battery", prompt)
         self.assertIn("Bench Press", prompt)
+
+    def test_build_ai_review_packet_is_standardized_and_compact(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "trainingos.sqlite"
+            trainingos_db.init_db(db_path)
+            with trainingos_db.connect(db_path) as connection:
+                session_id = trainingos_db.save_imported_workout(
+                    connection,
+                    {
+                        "provider": "garmin",
+                        "external_activity_id": "packet",
+                        "completed_at": "2026-08-02 11:00:00",
+                        "session_type": "strength_training",
+                        "sets": [
+                            {
+                                "exercise_name": "Bench Press",
+                                "set_order": 1,
+                                "set_type": "working",
+                                "weight_kg": 100,
+                                "reps": 5,
+                                "rpe": 8,
+                            }
+                        ],
+                    },
+                )
+                packet = trainingos_db.build_ai_review_packet(connection, session_id)
+        self.assertEqual(packet["task"], "post_workout_review_and_initial_next_day_draft")
+        self.assertTrue(packet["constraints"]["return_json_only"])
+        self.assertEqual(packet["metrics"]["set_count"], 1)
+        self.assertAlmostEqual(packet["metrics"]["total_volume_kg"], 500)
+        self.assertIn("initial_next_day_plan", packet["required_output_schema"])
+
+    def test_save_ai_review_response_persists_structured_json(self):
+        response = """
+        {
+          "analysis_summary": "Good session.",
+          "performance_direction": "keep",
+          "risk_flags": ["low_rpe_missing"],
+          "data_quality_issues": [],
+          "initial_next_day_plan": {"status": "initial_draft", "session_type": "pull"},
+          "next_morning_adjustment_rules": ["reduce volume if readiness is low"]
+        }
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "trainingos.sqlite"
+            trainingos_db.init_db(db_path)
+            with trainingos_db.connect(db_path) as connection:
+                session_id = trainingos_db.save_imported_workout(
+                    connection,
+                    {
+                        "provider": "garmin",
+                        "external_activity_id": "ai",
+                        "completed_at": "2026-08-02 12:00:00",
+                        "session_type": "strength_training",
+                        "sets": [],
+                    },
+                )
+                review_id = trainingos_db.save_ai_review_response(connection, session_id, response)
+                reviews = trainingos_db.get_ai_reviews_for_session(connection, session_id)
+        self.assertTrue(review_id.startswith("ai_review_"))
+        self.assertEqual(reviews[0]["decision"], "keep")
+        self.assertEqual(reviews[0]["summary"], "Good session.")
+        self.assertIn("initial_next_day_plan", reviews[0]["next_target_json"])
+
+    def test_save_ai_review_response_preserves_unstructured_text(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "trainingos.sqlite"
+            trainingos_db.init_db(db_path)
+            with trainingos_db.connect(db_path) as connection:
+                session_id = trainingos_db.save_imported_workout(
+                    connection,
+                    {
+                        "provider": "garmin",
+                        "external_activity_id": "text",
+                        "completed_at": "2026-08-02 13:00:00",
+                        "session_type": "strength_training",
+                        "sets": [],
+                    },
+                )
+                trainingos_db.save_ai_review_response(connection, session_id, "Plain analysis")
+                reviews = trainingos_db.get_ai_reviews_for_session(connection, session_id)
+        self.assertEqual(reviews[0]["decision"], "manual_review")
+        self.assertEqual(reviews[0]["summary"], "Plain analysis")
 
 
 if __name__ == "__main__":

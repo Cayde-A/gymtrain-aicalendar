@@ -208,18 +208,52 @@ class ReviewServer:
         with self.connection() as connection:
             try:
                 prompt = trainingos_db.build_post_workout_analysis_prompt(connection, session_id)
+                packet = trainingos_db.build_ai_review_packet(connection, session_id)
+                reviews = trainingos_db.get_ai_reviews_for_session(connection, session_id)
             except ValueError:
                 return page("Not found", "<h1>找不到训练记录</h1><p><a href='/'>返回</a></p>")
         trainingos_observability.record_event(
             "manual_ai_analysis_opened",
             details={"session_id": session_id},
         )
+        packet_text = json.dumps(packet, indent=2, ensure_ascii=False)
+        review_rows = ""
+        if reviews:
+            review_rows = "<h2>已保存复盘</h2><table><thead><tr><th>时间</th><th>决策</th><th>摘要</th></tr></thead><tbody>"
+            for review in reviews:
+                review_rows += (
+                    f"<tr><td>{safe(review.get('created_at'))}</td>"
+                    f"<td>{safe(review.get('decision'))}</td>"
+                    f"<td>{safe(review.get('summary'))}</td></tr>"
+                )
+            review_rows += "</tbody></table>"
         body = f"""<nav><a href="/">训练校正</a><a href="/debug">调试观测</a></nav>
         <p><a href="/session?id={safe(session_id)}">返回校正</a></p>
         <h1>AI 复盘与初版计划</h1>
-        <p class="muted">这是手动复盘入口。它会分析本次训练并生成初版次日计划；第二天 Garmin 睡眠和恢复指标同步后，再做最终微调。</p>
-        <textarea readonly style="min-height: 520px">{safe(prompt)}</textarea>"""
+        <p class="muted">这是低算力手动流程。复制标准输入到 ChatGPT，要求返回 JSON，然后把结果粘贴回来保存。初版计划会在第二天恢复指标同步后再微调。</p>
+        {review_rows}
+        <h2>标准 AI 输入</h2>
+        <textarea readonly style="min-height: 300px">{safe(packet_text)}</textarea>
+        <h2>简短指令</h2>
+        <textarea readonly style="min-height: 220px">{safe(prompt)}</textarea>
+        <h2>粘贴 AI 输出</h2>
+        <form method="post" action="/analysis/save">
+          <input type="hidden" name="session_id" value="{safe(session_id)}">
+          <textarea name="ai_response" style="min-height: 260px" placeholder="在这里粘贴 ChatGPT 返回的 JSON"></textarea>
+          <div class="row-actions">
+            <button type="submit">保存 AI 复盘</button>
+          </div>
+        </form>"""
         return page("TrainingOS AI Analysis", body)
+
+    def save_ai_analysis(self, form_data: dict[str, list[str]]) -> str:
+        session_id = form_data.get("session_id", [""])[0]
+        response_text = form_data.get("ai_response", [""])[0]
+        if not session_id or not response_text.strip():
+            return page("Missing AI response", "<h1>缺少 AI 输出</h1><p><a href='/'>返回</a></p>")
+        with self.connection() as connection:
+            trainingos_db.save_ai_review_response(connection, session_id, response_text)
+        return self.analysis_page(session_id)
 
     def save(self, form_data: dict[str, list[str]]) -> str:
         session_id = form_data.get("session_id", [""])[0]
@@ -298,6 +332,11 @@ def make_handler(app: ReviewServer):
             if self.path == "/debug/clear":
                 trainingos_observability.clear_events()
                 self.respond(app.debug_page())
+                return
+            if self.path == "/analysis/save":
+                length = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(length).decode("utf-8")
+                self.respond(app.save_ai_analysis(parse_qs(body)))
                 return
             if self.path != "/save":
                 self.send_error(404)

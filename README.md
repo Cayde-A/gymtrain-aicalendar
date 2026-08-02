@@ -123,6 +123,16 @@ The correction page is for post-workout review. It lets the user correct exercis
 
 After correction, use `保存并进入 AI 复盘与初版计划` to open the manual post-workout analysis prompt. This analysis reviews the completed workout and creates an initial next-day training draft. The draft should be finalized only after next-day Garmin sleep and recovery metrics sync.
 
+The AI review flow is standardized to reduce compute:
+
+```text
+TrainingOS builds a compact JSON packet
+-> user sends packet to ChatGPT
+-> ChatGPT returns JSON only
+-> user pastes JSON back into TrainingOS
+-> TrainingOS saves it to ai_reviews
+```
+
 During debugging, open:
 
 ```text

@@ -323,41 +323,183 @@ def build_ai_review_summary(connection: sqlite3.Connection, session_id: str) -> 
     return result
 
 
-def build_post_workout_analysis_prompt(connection: sqlite3.Connection, session_id: str) -> str:
+def session_metrics(summary: dict[str, Any]) -> dict[str, Any]:
+    sets = summary["sets"]
+    working_sets = [item for item in sets if item.get("weight_kg") is not None and item.get("reps") is not None]
+    total_volume = sum(float(item["weight_kg"]) * int(item["reps"]) for item in working_sets)
+    best_estimated_1rm = None
+    if working_sets:
+        best_estimated_1rm = max(
+            item.get("estimated_1rm_kg") or 0
+            for item in working_sets
+        )
+    return {
+        "set_count": len(sets),
+        "logged_working_set_count": len(working_sets),
+        "total_volume_kg": round(total_volume, 2),
+        "best_estimated_1rm_kg": round(best_estimated_1rm, 2) if best_estimated_1rm else None,
+        "missing_rpe_count": sum(1 for item in sets if item.get("rpe") is None),
+        "missing_reps_count": sum(1 for item in sets if item.get("reps") is None),
+        "missing_weight_count": sum(1 for item in sets if item.get("weight_kg") is None),
+    }
+
+
+def build_ai_review_packet(connection: sqlite3.Connection, session_id: str) -> dict[str, Any]:
     summary = build_ai_review_summary(connection, session_id)
-    prompt_payload = json.dumps(summary, indent=2, ensure_ascii=False)
+    packet = {
+        "task": "post_workout_review_and_initial_next_day_draft",
+        "version": "trainingos.ai_review_packet.v1",
+        "constraints": {
+            "compute_budget": "low",
+            "use_only_packet_data": True,
+            "return_json_only": True,
+            "plan_status": "initial_draft",
+            "final_plan_requires_next_day_recovery": True,
+            "do_not_push_garmin_workout_from_initial_draft": True,
+        },
+        "required_output_schema": {
+            "analysis_summary": "string",
+            "performance_direction": "increase|keep|reduce|deload",
+            "risk_flags": ["string"],
+            "data_quality_issues": ["string"],
+            "initial_next_day_plan": {
+                "status": "initial_draft",
+                "session_type": "string",
+                "focus": ["string"],
+                "rounds": [
+                    {
+                        "exercise": "string",
+                        "sets": "integer",
+                        "reps": "string",
+                        "load_guidance": "string",
+                        "rpe_cap": "number|null",
+                    }
+                ],
+            },
+            "next_morning_adjustment_rules": ["string"],
+        },
+        "session": summary["session"],
+        "metrics": session_metrics(summary),
+        "sets": summary["sets"],
+    }
+    trainingos_observability.record_event(
+        "ai_review_packet_built",
+        details={"session_id": session_id, "set_count": len(summary["sets"])},
+    )
+    return packet
+
+
+def build_post_workout_analysis_prompt(connection: sqlite3.Connection, session_id: str) -> str:
+    packet = build_ai_review_packet(connection, session_id)
+    prompt_payload = json.dumps(packet, indent=2, ensure_ascii=False)
     return f"""You are TrainingOS Coach Agent.
 
-Analyze the corrected completed workout below and generate an initial next-day training plan.
+Use the standardized TrainingOS AI review packet below.
 
-Important workflow rule:
-- Generate a first-draft next-day plan after the post-workout review.
-- Mark the plan as "initial_draft", not final.
-- Tomorrow's final plan must be adjusted after next-day Garmin sleep, HRV, Body Battery, readiness, and recovery metrics are imported.
-- Include clear adjustment rules for the next morning.
-- Do not push a final Garmin workout from this draft without the next-day recovery update.
+Rules:
+- Use only the packet data.
+- Keep reasoning compact.
+- Return JSON only.
+- Generate an initial next-day plan draft.
+- Do not mark the draft as final.
+- The final plan must wait for next-day Garmin sleep, HRV, Body Battery, readiness, and recovery metrics.
 
-Return:
-1. Session summary
-2. PR / estimated 1RM notes
-3. Performance direction: Increase / Keep / Reduce / Deload
-4. Fatigue and pain risk flags
-5. Data quality issues that still need user correction
-6. Initial next-day training plan draft
-7. Next-morning adjustment rules based on sleep, HRV, Body Battery, readiness, and recovery time
-8. A compact JSON result for saving into ai_reviews, including:
-   - analysis_summary
-   - performance_direction
-   - risk_flags
-   - initial_next_day_plan
-   - next_morning_adjustment_rules
-
-Corrected workout:
+Packet:
 
 ```json
 {prompt_payload}
 ```
 """
+
+
+def extract_json_object(text: str) -> dict[str, Any] | None:
+    cleaned = text.strip()
+    if not cleaned:
+        return None
+    if cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        cleaned = "\n".join(lines).strip()
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return None
+        try:
+            parsed = json.loads(cleaned[start : end + 1])
+        except json.JSONDecodeError:
+            return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def save_ai_review_response(
+    connection: sqlite3.Connection,
+    session_id: str,
+    response_text: str,
+) -> str:
+    parsed = extract_json_object(response_text)
+    review_id = new_id("ai_review")
+    if parsed:
+        decision = str(parsed.get("performance_direction") or parsed.get("decision") or "keep")
+        summary = str(parsed.get("analysis_summary") or parsed.get("summary") or "")
+        risk_flags = parsed.get("risk_flags") or []
+        next_target = {
+            "initial_next_day_plan": parsed.get("initial_next_day_plan"),
+            "next_morning_adjustment_rules": parsed.get("next_morning_adjustment_rules"),
+            "data_quality_issues": parsed.get("data_quality_issues"),
+            "raw_json": parsed,
+        }
+    else:
+        decision = "manual_review"
+        summary = response_text.strip()
+        risk_flags = ["unstructured_ai_response"]
+        next_target = {"raw_text": response_text}
+    connection.execute(
+        """
+        insert into ai_reviews (
+          id, completed_session_id, review_type, decision, summary,
+          next_target_json, risk_flags_json
+        )
+        values (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            review_id,
+            session_id,
+            "post_workout_initial_draft",
+            decision,
+            summary,
+            json.dumps(next_target, ensure_ascii=False, sort_keys=True),
+            json.dumps(risk_flags, ensure_ascii=False, sort_keys=True),
+        ),
+    )
+    trainingos_observability.record_event(
+        "ai_review_saved",
+        details={
+            "session_id": session_id,
+            "review_id": review_id,
+            "structured": bool(parsed),
+            "decision": decision,
+        },
+    )
+    return review_id
+
+
+def get_ai_reviews_for_session(connection: sqlite3.Connection, session_id: str) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        """
+        select *
+        from ai_reviews
+        where completed_session_id = ?
+        order by created_at desc
+        """,
+        (session_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def parse_args() -> argparse.Namespace:

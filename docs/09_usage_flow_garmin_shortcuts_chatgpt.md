@@ -33,7 +33,11 @@ Garmin Strength Activity
 -> Local SQLite stores normalized workout data
 -> User corrects workout record
 -> User manually opens AI post-workout analysis and initial-plan draft
--> ChatGPT returns post-workout review and initial next-day plan
+-> TrainingOS shows compact JSON packet
+-> User sends packet to ChatGPT
+-> ChatGPT returns JSON only
+-> User pastes JSON back into TrainingOS
+-> TrainingOS saves ai_reviews and initial next-day plan draft
 -> Next-day Garmin recovery metrics refine the draft before final push
 ```
 
@@ -137,7 +141,9 @@ Best for:
 8. TrainingOS imports the activity through Garmin Provider.
 9. User adds corrections, RPE, pain, and notes.
 10. User manually enters AI post-workout analysis and initial-plan draft.
-11. AI returns:
+11. TrainingOS creates a compact JSON packet.
+12. User sends the packet to ChatGPT.
+13. AI returns JSON only:
    - PR status;
    - estimated 1RM;
    - fatigue risk;
@@ -145,10 +151,11 @@ Best for:
    - initial next-day training draft;
    - next-morning adjustment rules;
    - Increase / Keep / Reduce / Deload decisions.
-12. Save approved analysis and initial draft into local SQLite.
-13. Next morning Garmin sleep and recovery metrics are imported.
-14. TrainingOS adjusts the draft after recovery sync.
-15. User approves the plan before Garmin push.
+14. User pastes the JSON into TrainingOS.
+15. Save approved analysis and initial draft into local SQLite `ai_reviews`.
+16. Next morning Garmin sleep and recovery metrics are imported.
+17. TrainingOS adjusts the draft after recovery sync.
+18. User approves the plan before Garmin push.
 ```
 
 ## Shortcut Roles

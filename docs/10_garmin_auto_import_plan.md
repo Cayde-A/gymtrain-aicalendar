@@ -340,6 +340,28 @@ The AI analysis step should review the completed workout and generate an initial
 
 It should not finalize the next-day training plan yet. The initial draft should be adjusted the next morning after Garmin sleep, HRV, Body Battery, readiness, and recovery metrics have synced into TrainingOS.
 
+To reduce compute, TrainingOS should not send full history or long chat context.
+
+MVP flow:
+
+```text
+build_ai_review_packet()
+-> compact JSON packet
+-> ChatGPT JSON response
+-> paste response into TrainingOS
+-> save_ai_review_response()
+-> ai_reviews
+```
+
+The AI response should be JSON only and include:
+
+- `analysis_summary`;
+- `performance_direction`;
+- `risk_flags`;
+- `data_quality_issues`;
+- `initial_next_day_plan`;
+- `next_morning_adjustment_rules`.
+
 ## Security Rules
 
 - Never commit `.env`.
