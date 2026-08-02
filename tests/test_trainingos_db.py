@@ -86,6 +86,36 @@ class TrainingOSDbTestCase(unittest.TestCase):
             self.assertEqual(session["overall_rpe"], 8.5)
             self.assertEqual(session["sets"][0]["exercise_name"], "Leg Press")
 
+    def test_build_post_workout_analysis_prompt_defers_tomorrow_plan(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "trainingos.sqlite"
+            trainingos_db.init_db(db_path)
+            with trainingos_db.connect(db_path) as connection:
+                session_id = trainingos_db.save_imported_workout(
+                    connection,
+                    {
+                        "provider": "garmin",
+                        "external_activity_id": "789",
+                        "completed_at": "2026-08-02 10:00:00",
+                        "session_type": "strength_training",
+                        "activity_name": "Strength",
+                        "sets": [
+                            {
+                                "exercise_name": "Bench Press",
+                                "set_order": 1,
+                                "set_type": "working",
+                                "weight_kg": 100,
+                                "reps": 5,
+                            }
+                        ],
+                    },
+                )
+                prompt = trainingos_db.build_post_workout_analysis_prompt(connection, session_id)
+        self.assertIn("Do post-workout analysis only", prompt)
+        self.assertIn("Do not generate tomorrow's final training plan yet", prompt)
+        self.assertIn("Garmin sleep, HRV, Body Battery", prompt)
+        self.assertIn("Bench Press", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

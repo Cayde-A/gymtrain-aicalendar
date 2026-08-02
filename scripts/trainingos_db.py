@@ -323,6 +323,36 @@ def build_ai_review_summary(connection: sqlite3.Connection, session_id: str) -> 
     return result
 
 
+def build_post_workout_analysis_prompt(connection: sqlite3.Connection, session_id: str) -> str:
+    summary = build_ai_review_summary(connection, session_id)
+    prompt_payload = json.dumps(summary, indent=2, ensure_ascii=False)
+    return f"""You are TrainingOS Coach Agent.
+
+Analyze the corrected completed workout below.
+
+Important workflow rule:
+- Do post-workout analysis only.
+- Do not generate tomorrow's final training plan yet.
+- Tomorrow's plan must wait until next-day Garmin sleep, HRV, Body Battery, readiness, and recovery metrics are imported.
+- You may provide provisional watch items for the next planning run, but not a final Garmin workout.
+
+Return:
+1. Session summary
+2. PR / estimated 1RM notes
+3. Performance direction: Increase / Keep / Reduce / Deload
+4. Fatigue and pain risk flags
+5. Data quality issues that still need user correction
+6. Provisional next-planning considerations
+7. A compact JSON result for saving into ai_reviews
+
+Corrected workout:
+
+```json
+{prompt_payload}
+```
+"""
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Manage the TrainingOS local SQLite database.")
     parser.add_argument("--db", default=str(DEFAULT_DB_PATH), help="SQLite database path.")

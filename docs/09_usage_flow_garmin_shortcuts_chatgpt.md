@@ -11,8 +11,9 @@ TrainingOS generates planned training rounds
 -> User executes with Garmin Strength Activity
 -> Sync to Garmin Connect
 -> Import to local TrainingOS database
--> Trigger analysis through Shortcut or API
--> Generate next-day training design
+-> User corrects workout record
+-> Trigger post-workout analysis manually through Shortcut or API
+-> Wait for next-day recovery import before generating the next training design
 ```
 
 ## Feasibility
@@ -29,9 +30,10 @@ Garmin Strength Activity
 -> Garmin Connect sync
 -> TrainingOS Garmin Provider import
 -> Local SQLite stores normalized workout data
--> Apple Shortcut gathers today's summary
--> Shortcut opens ChatGPT with prepared prompt
--> ChatGPT returns analysis and next-day plan
+-> User corrects workout record
+-> User manually opens AI post-workout analysis
+-> ChatGPT returns post-workout review only
+-> Next-day plan waits for tomorrow's recovery metrics
 ```
 
 Use this when:
@@ -63,9 +65,12 @@ Garmin Strength Activity
 -> Garmin Connect sync
 -> Garmin Provider import
 -> Local SQLite
+-> User correction or auto-validation
 -> Cloud Function
--> OpenAI API analysis
--> Save ai_reviews + next planned session
+-> OpenAI API post-workout analysis
+-> Save ai_reviews
+-> Next-day recovery import
+-> Generate next planned session
 -> Optional monthly minimized Supabase sync
 -> Google Calendar update
 -> optional Shortcut notification
@@ -73,7 +78,8 @@ Garmin Strength Activity
 
 Use this when:
 
-- next-day training should be generated without manual copy/paste;
+- post-workout analysis should be saved without manual copy/paste;
+- next-day training should wait until recovery data is available;
 - AI recommendations must be saved into the database;
 - calendar updates must be reliable;
 - the workflow should work even if the ChatGPT app UI changes.
@@ -129,14 +135,18 @@ Best for:
 7. Save workout and let Garmin Connect sync.
 8. TrainingOS imports the activity through Garmin Provider.
 9. User adds corrections, RPE, pain, and notes.
-10. AI returns:
+10. User manually enters AI post-workout analysis.
+11. AI returns:
    - PR status;
    - estimated 1RM;
    - fatigue risk;
-   - next-day plan;
+   - data quality issues;
+   - provisional next-planning considerations;
    - Increase / Keep / Reduce / Deload decisions.
-11. Save approved recommendation into local SQLite.
-12. Update Google Calendar with completed summary and next target.
+12. Save approved analysis into local SQLite.
+13. Next morning Garmin sleep and recovery metrics are imported.
+14. TrainingOS generates the next training plan after recovery sync.
+15. User approves the plan before Garmin push.
 ```
 
 ## Shortcut Roles
@@ -156,6 +166,11 @@ Action:
 - prepare prompt;
 - open ChatGPT App or call API.
 
+Important:
+
+- This review should analyze the completed session.
+- It should not finalize tomorrow's training plan before next-day recovery metrics are imported.
+
 ### Shortcut B: Tomorrow Training
 
 Trigger:
@@ -166,6 +181,7 @@ Trigger:
 
 Action:
 
+- import next-day Garmin sleep and recovery metrics;
 - read latest `ai_reviews`;
 - show today's target;
 - show TrainingOS-generated training rounds;

@@ -121,6 +121,8 @@ http://127.0.0.1:8787
 
 The correction page is for post-workout review. It lets the user correct exercise names, set order, weight, reps, RPE, pain notes, and readiness notes before AI analysis.
 
+After correction, use `保存并进入 AI 复盘` to open the manual post-workout analysis prompt. This analysis should review the completed workout only. The next training plan is generated later, after next-day Garmin sleep and recovery metrics sync.
+
 During debugging, open:
 
 ```text

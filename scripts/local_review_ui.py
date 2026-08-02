@@ -39,6 +39,7 @@ def page(title: str, body: str) -> str:
     input, textarea {{ box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 15px; background: white; }}
     textarea {{ min-height: 70px; }}
     button {{ padding: 10px 14px; border: 0; border-radius: 6px; background: #2563eb; color: white; font-weight: 700; cursor: pointer; }}
+    button.secondary {{ background: #374151; }}
     pre {{ white-space: pre-wrap; background: #111827; color: #e5e7eb; padding: 14px; border-radius: 8px; overflow-x: auto; }}
     nav {{ display: flex; gap: 14px; margin: 0 0 18px; }}
     nav a {{ font-weight: 700; }}
@@ -159,6 +160,7 @@ class ReviewServer:
           <textarea name="readiness_notes">{safe(session.get("readiness_notes"))}</textarea>
           <div class="row-actions">
             <button type="submit">保存校正</button>
+            <button class="secondary" type="submit" name="next" value="analysis">保存并进入 AI 复盘</button>
             <a href="/summary?id={safe(session_id)}">查看 AI 输入摘要</a>
           </div>
         </form>"""
@@ -202,6 +204,23 @@ class ReviewServer:
             f"<nav><a href='/'>训练校正</a><a href='/debug'>调试观测</a></nav><p><a href='/session?id={safe(session_id)}'>返回校正</a></p><h1>AI 输入摘要</h1><pre>{payload}</pre>",
         )
 
+    def analysis_page(self, session_id: str) -> str:
+        with self.connection() as connection:
+            try:
+                prompt = trainingos_db.build_post_workout_analysis_prompt(connection, session_id)
+            except ValueError:
+                return page("Not found", "<h1>找不到训练记录</h1><p><a href='/'>返回</a></p>")
+        trainingos_observability.record_event(
+            "manual_ai_analysis_opened",
+            details={"session_id": session_id},
+        )
+        body = f"""<nav><a href="/">训练校正</a><a href="/debug">调试观测</a></nav>
+        <p><a href="/session?id={safe(session_id)}">返回校正</a></p>
+        <h1>AI 复盘</h1>
+        <p class="muted">这是手动复盘入口。它只分析本次训练；次日训练计划应等第二天 Garmin 睡眠和恢复指标同步后再生成。</p>
+        <textarea readonly style="min-height: 520px">{safe(prompt)}</textarea>"""
+        return page("TrainingOS AI Analysis", body)
+
     def save(self, form_data: dict[str, list[str]]) -> str:
         session_id = form_data.get("session_id", [""])[0]
         set_count = int(form_data.get("set_count", ["0"])[0] or 0)
@@ -230,6 +249,8 @@ class ReviewServer:
         }
         with self.connection() as connection:
             trainingos_db.update_review_payload(connection, session_id, payload)
+        if form_data.get("next", [""])[0] == "analysis":
+            return self.analysis_page(session_id)
         return self.session_page(session_id, saved=True)
 
 
@@ -264,6 +285,9 @@ def make_handler(app: ReviewServer):
                 return
             if parsed.path == "/summary":
                 self.respond(app.summary_page(query.get("id", [""])[0]))
+                return
+            if parsed.path == "/analysis":
+                self.respond(app.analysis_page(query.get("id", [""])[0]))
                 return
             if parsed.path == "/debug":
                 self.respond(app.debug_page())
