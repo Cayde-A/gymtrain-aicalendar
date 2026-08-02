@@ -139,6 +139,33 @@ def first_string(payload: Any, names: set[str]) -> str | None:
     return garmin_import.deep_find_string(payload, names)
 
 
+def exercise_name_from_set(item: dict[str, Any], fallback_name: str | None) -> str:
+    direct_name = first_string(item, {"exercisename", "exercise", "name"})
+    if direct_name:
+        return direct_name
+    exercises = item.get("exercises")
+    if isinstance(exercises, list):
+        for exercise in exercises:
+            if not isinstance(exercise, dict):
+                continue
+            candidate = first_string(exercise, {"exercisename", "exercise", "name", "category"})
+            if candidate and candidate.upper() != "UNKNOWN":
+                return candidate
+    category = first_string(item, {"category"})
+    if category:
+        return category
+    return fallback_name or "Unknown Exercise"
+
+
+def normalize_weight_kg(value: float | int | None) -> float | int | None:
+    if value is None:
+        return None
+    # Garmin strength exercise sets may return grams even though the field is named "weight".
+    if value >= 1000:
+        return round(value / 1000, 3)
+    return value
+
+
 def extract_sets(exercise_sets: Any, fallback_name: str | None) -> list[dict[str, Any]]:
     if isinstance(exercise_sets, dict):
         candidates = (
@@ -156,13 +183,9 @@ def extract_sets(exercise_sets: Any, fallback_name: str | None) -> list[dict[str
     for index, item in enumerate(candidates, start=1):
         if not isinstance(item, dict):
             continue
-        exercise_name = (
-            first_string(item, {"exercisename", "exercise", "name", "category"})
-            or fallback_name
-            or "Unknown Exercise"
-        )
+        exercise_name = exercise_name_from_set(item, fallback_name)
         weight = first_number(item, {"weight", "weightkg", "weightinkg", "weightkilograms"})
-        reps = first_number(item, {"reps", "repetitions", "repcount"})
+        reps = first_number(item, {"reps", "repetitions", "repcount", "repetitioncount"})
         rpe = first_number(item, {"rpe", "ratingofperceivedexertion"})
         set_type = first_string(item, {"settype", "type"}) or "working"
         normalized.append(
@@ -170,7 +193,7 @@ def extract_sets(exercise_sets: Any, fallback_name: str | None) -> list[dict[str
                 "exercise_name": exercise_name,
                 "set_order": int(first_number(item, {"setorder", "ordernumber", "setnumber"}) or index),
                 "set_type": set_type,
-                "weight_kg": weight,
+                "weight_kg": normalize_weight_kg(weight),
                 "reps": int(reps) if isinstance(reps, (int, float)) else None,
                 "rpe": rpe,
                 "is_top_set": False,
