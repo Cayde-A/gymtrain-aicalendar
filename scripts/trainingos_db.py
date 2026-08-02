@@ -328,13 +328,14 @@ def build_post_workout_analysis_prompt(connection: sqlite3.Connection, session_i
     prompt_payload = json.dumps(summary, indent=2, ensure_ascii=False)
     return f"""You are TrainingOS Coach Agent.
 
-Analyze the corrected completed workout below.
+Analyze the corrected completed workout below and generate an initial next-day training plan.
 
 Important workflow rule:
-- Do post-workout analysis only.
-- Do not generate tomorrow's final training plan yet.
-- Tomorrow's plan must wait until next-day Garmin sleep, HRV, Body Battery, readiness, and recovery metrics are imported.
-- You may provide provisional watch items for the next planning run, but not a final Garmin workout.
+- Generate a first-draft next-day plan after the post-workout review.
+- Mark the plan as "initial_draft", not final.
+- Tomorrow's final plan must be adjusted after next-day Garmin sleep, HRV, Body Battery, readiness, and recovery metrics are imported.
+- Include clear adjustment rules for the next morning.
+- Do not push a final Garmin workout from this draft without the next-day recovery update.
 
 Return:
 1. Session summary
@@ -342,8 +343,14 @@ Return:
 3. Performance direction: Increase / Keep / Reduce / Deload
 4. Fatigue and pain risk flags
 5. Data quality issues that still need user correction
-6. Provisional next-planning considerations
-7. A compact JSON result for saving into ai_reviews
+6. Initial next-day training plan draft
+7. Next-morning adjustment rules based on sleep, HRV, Body Battery, readiness, and recovery time
+8. A compact JSON result for saving into ai_reviews, including:
+   - analysis_summary
+   - performance_direction
+   - risk_flags
+   - initial_next_day_plan
+   - next_morning_adjustment_rules
 
 Corrected workout:
 

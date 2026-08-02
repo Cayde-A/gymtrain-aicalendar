@@ -86,7 +86,7 @@ class TrainingOSDbTestCase(unittest.TestCase):
             self.assertEqual(session["overall_rpe"], 8.5)
             self.assertEqual(session["sets"][0]["exercise_name"], "Leg Press")
 
-    def test_build_post_workout_analysis_prompt_defers_tomorrow_plan(self):
+    def test_build_post_workout_analysis_prompt_includes_initial_plan_and_recovery_adjustment(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "trainingos.sqlite"
             trainingos_db.init_db(db_path)
@@ -111,8 +111,9 @@ class TrainingOSDbTestCase(unittest.TestCase):
                     },
                 )
                 prompt = trainingos_db.build_post_workout_analysis_prompt(connection, session_id)
-        self.assertIn("Do post-workout analysis only", prompt)
-        self.assertIn("Do not generate tomorrow's final training plan yet", prompt)
+        self.assertIn("generate an initial next-day training plan", prompt)
+        self.assertIn("initial_draft", prompt)
+        self.assertIn("Do not push a final Garmin workout", prompt)
         self.assertIn("Garmin sleep, HRV, Body Battery", prompt)
         self.assertIn("Bench Press", prompt)
 

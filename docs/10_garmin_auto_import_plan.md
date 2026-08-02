@@ -333,12 +333,12 @@ After correction, the user can choose:
 ```text
 Save correction
 or
-Save and enter AI analysis
+Save and enter AI analysis + initial next-day draft
 ```
 
-The AI analysis step should only review the completed workout.
+The AI analysis step should review the completed workout and generate an initial next-day training draft.
 
-It should not generate the final next-day training plan yet. The final plan should be generated the next morning after Garmin sleep, HRV, Body Battery, readiness, and recovery metrics have synced into TrainingOS.
+It should not finalize the next-day training plan yet. The initial draft should be adjusted the next morning after Garmin sleep, HRV, Body Battery, readiness, and recovery metrics have synced into TrainingOS.
 
 ## Security Rules
 

@@ -160,7 +160,7 @@ class ReviewServer:
           <textarea name="readiness_notes">{safe(session.get("readiness_notes"))}</textarea>
           <div class="row-actions">
             <button type="submit">保存校正</button>
-            <button class="secondary" type="submit" name="next" value="analysis">保存并进入 AI 复盘</button>
+            <button class="secondary" type="submit" name="next" value="analysis">保存并进入 AI 复盘与初版计划</button>
             <a href="/summary?id={safe(session_id)}">查看 AI 输入摘要</a>
           </div>
         </form>"""
@@ -216,8 +216,8 @@ class ReviewServer:
         )
         body = f"""<nav><a href="/">训练校正</a><a href="/debug">调试观测</a></nav>
         <p><a href="/session?id={safe(session_id)}">返回校正</a></p>
-        <h1>AI 复盘</h1>
-        <p class="muted">这是手动复盘入口。它只分析本次训练；次日训练计划应等第二天 Garmin 睡眠和恢复指标同步后再生成。</p>
+        <h1>AI 复盘与初版计划</h1>
+        <p class="muted">这是手动复盘入口。它会分析本次训练并生成初版次日计划；第二天 Garmin 睡眠和恢复指标同步后，再做最终微调。</p>
         <textarea readonly style="min-height: 520px">{safe(prompt)}</textarea>"""
         return page("TrainingOS AI Analysis", body)
 
