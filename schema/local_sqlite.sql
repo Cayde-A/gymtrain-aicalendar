@@ -229,6 +229,18 @@ create table if not exists privacy_retention_policies (
   updated_at text not null default current_timestamp
 );
 
+create table if not exists ai_trigger_policies (
+  id text primary key,
+  athlete_id text not null references athletes(id),
+  post_workout_ai_mode text not null default 'manual_copy_paste',
+  next_morning_adjustment_mode text not null default 'user_confirmed_api',
+  garmin_push_mode text not null default 'user_confirmed',
+  auto_api_enabled integer not null default 0,
+  max_ai_calls_per_day integer not null default 2,
+  created_at text not null default current_timestamp,
+  updated_at text not null default current_timestamp
+);
+
 create index if not exists idx_planned_sessions_athlete_start
   on planned_sessions (athlete_id, planned_start);
 

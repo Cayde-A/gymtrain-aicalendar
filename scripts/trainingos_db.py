@@ -16,6 +16,31 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB_PATH = ROOT / "data" / "trainingos.sqlite"
 SCHEMA_PATH = ROOT / "schema" / "local_sqlite.sql"
 DEFAULT_ATHLETE_ID = "local-athlete"
+DEFAULT_AI_TRIGGER_POLICY_ID = "default-ai-trigger-policy"
+AI_TRIGGER_ALLOWED_VALUES = {
+    "post_workout_ai_mode": {
+        "manual_copy_paste",
+        "user_confirmed_api",
+        "auto_api_after_correction",
+    },
+    "next_morning_adjustment_mode": {
+        "manual_copy_paste",
+        "user_confirmed_api",
+        "auto_api_after_recovery_sync",
+    },
+    "garmin_push_mode": {
+        "manual_only",
+        "user_confirmed",
+        "auto_after_final_plan",
+    },
+}
+DEFAULT_AI_TRIGGER_POLICY = {
+    "post_workout_ai_mode": "manual_copy_paste",
+    "next_morning_adjustment_mode": "user_confirmed_api",
+    "garmin_push_mode": "user_confirmed",
+    "auto_api_enabled": 0,
+    "max_ai_calls_per_day": 2,
+}
 
 try:
     from . import trainingos_observability
@@ -58,7 +83,113 @@ def ensure_default_athlete(connection: sqlite3.Connection) -> str:
         """,
         ("default-retention-policy", DEFAULT_ATHLETE_ID),
     )
+    ensure_default_ai_trigger_policy(connection)
     return DEFAULT_ATHLETE_ID
+
+
+def ensure_default_ai_trigger_policy(
+    connection: sqlite3.Connection,
+    athlete_id: str = DEFAULT_ATHLETE_ID,
+) -> str:
+    connection.execute(
+        """
+        insert into ai_trigger_policies (
+          id, athlete_id, post_workout_ai_mode, next_morning_adjustment_mode,
+          garmin_push_mode, auto_api_enabled, max_ai_calls_per_day
+        )
+        values (?, ?, ?, ?, ?, ?, ?)
+        on conflict(id) do nothing
+        """,
+        (
+            DEFAULT_AI_TRIGGER_POLICY_ID,
+            athlete_id,
+            DEFAULT_AI_TRIGGER_POLICY["post_workout_ai_mode"],
+            DEFAULT_AI_TRIGGER_POLICY["next_morning_adjustment_mode"],
+            DEFAULT_AI_TRIGGER_POLICY["garmin_push_mode"],
+            DEFAULT_AI_TRIGGER_POLICY["auto_api_enabled"],
+            DEFAULT_AI_TRIGGER_POLICY["max_ai_calls_per_day"],
+        ),
+    )
+    return DEFAULT_AI_TRIGGER_POLICY_ID
+
+
+def get_ai_trigger_policy(
+    connection: sqlite3.Connection,
+    athlete_id: str = DEFAULT_ATHLETE_ID,
+) -> dict[str, Any]:
+    ensure_default_ai_trigger_policy(connection, athlete_id)
+    row = connection.execute(
+        """
+        select *
+        from ai_trigger_policies
+        where athlete_id = ?
+        order by created_at desc
+        limit 1
+        """,
+        (athlete_id,),
+    ).fetchone()
+    if row is None:
+        return dict(DEFAULT_AI_TRIGGER_POLICY)
+    policy = dict(row)
+    policy["auto_api_enabled"] = bool(policy.get("auto_api_enabled"))
+    return policy
+
+
+def normalize_ai_trigger_policy(payload: dict[str, Any]) -> dict[str, Any]:
+    policy = dict(DEFAULT_AI_TRIGGER_POLICY)
+    for field_name, allowed_values in AI_TRIGGER_ALLOWED_VALUES.items():
+        value = str(payload.get(field_name) or policy[field_name])
+        if value not in allowed_values:
+            value = str(policy[field_name])
+        policy[field_name] = value
+    policy["auto_api_enabled"] = 1 if payload.get("auto_api_enabled") else 0
+    try:
+        max_calls = int(payload.get("max_ai_calls_per_day") or policy["max_ai_calls_per_day"])
+    except (TypeError, ValueError):
+        max_calls = int(policy["max_ai_calls_per_day"])
+    policy["max_ai_calls_per_day"] = max(0, min(max_calls, 20))
+    return policy
+
+
+def update_ai_trigger_policy(
+    connection: sqlite3.Connection,
+    payload: dict[str, Any],
+    athlete_id: str = DEFAULT_ATHLETE_ID,
+) -> dict[str, Any]:
+    ensure_default_ai_trigger_policy(connection, athlete_id)
+    policy = normalize_ai_trigger_policy(payload)
+    connection.execute(
+        """
+        update ai_trigger_policies
+        set post_workout_ai_mode = ?,
+            next_morning_adjustment_mode = ?,
+            garmin_push_mode = ?,
+            auto_api_enabled = ?,
+            max_ai_calls_per_day = ?,
+            updated_at = current_timestamp
+        where athlete_id = ?
+        """,
+        (
+            policy["post_workout_ai_mode"],
+            policy["next_morning_adjustment_mode"],
+            policy["garmin_push_mode"],
+            policy["auto_api_enabled"],
+            policy["max_ai_calls_per_day"],
+            athlete_id,
+        ),
+    )
+    saved_policy = get_ai_trigger_policy(connection, athlete_id)
+    trainingos_observability.record_event(
+        "ai_trigger_policy_updated",
+        details={
+            "post_workout_ai_mode": saved_policy["post_workout_ai_mode"],
+            "next_morning_adjustment_mode": saved_policy["next_morning_adjustment_mode"],
+            "garmin_push_mode": saved_policy["garmin_push_mode"],
+            "auto_api_enabled": saved_policy["auto_api_enabled"],
+            "max_ai_calls_per_day": saved_policy["max_ai_calls_per_day"],
+        },
+    )
+    return saved_policy
 
 
 def new_id(prefix: str) -> str:
@@ -406,6 +537,7 @@ def aggregate_day_metrics(sessions: list[dict[str, Any]]) -> dict[str, Any]:
 
 def build_ai_review_packet(connection: sqlite3.Connection, session_id: str) -> dict[str, Any]:
     summary = build_ai_review_summary(connection, session_id)
+    trigger_policy = get_ai_trigger_policy(connection)
     packet = {
         "task": "post_workout_review_and_initial_next_day_draft",
         "version": "trainingos.ai_review_packet.v1",
@@ -416,6 +548,14 @@ def build_ai_review_packet(connection: sqlite3.Connection, session_id: str) -> d
             "plan_status": "initial_draft",
             "final_plan_requires_next_day_recovery": True,
             "do_not_push_garmin_workout_from_initial_draft": True,
+            "api_calls_require_trigger_policy": True,
+        },
+        "trigger_policy": {
+            "post_workout_ai_mode": trigger_policy["post_workout_ai_mode"],
+            "next_morning_adjustment_mode": trigger_policy["next_morning_adjustment_mode"],
+            "garmin_push_mode": trigger_policy["garmin_push_mode"],
+            "auto_api_enabled": trigger_policy["auto_api_enabled"],
+            "max_ai_calls_per_day": trigger_policy["max_ai_calls_per_day"],
         },
         "required_output_schema": {
             "analysis_summary": "string",
@@ -453,6 +593,7 @@ def build_day_ai_review_packet(connection: sqlite3.Connection, training_date: st
     sessions = get_sessions_for_day(connection, training_date)
     if not sessions:
         raise ValueError(f"Unknown training date: {training_date}")
+    trigger_policy = get_ai_trigger_policy(connection)
     packet_sessions = []
     for session in sessions:
         packet_sessions.append(
@@ -494,6 +635,14 @@ def build_day_ai_review_packet(connection: sqlite3.Connection, training_date: st
             "plan_status": "initial_draft",
             "final_plan_requires_next_day_recovery": True,
             "do_not_push_garmin_workout_from_initial_draft": True,
+            "api_calls_require_trigger_policy": True,
+        },
+        "trigger_policy": {
+            "post_workout_ai_mode": trigger_policy["post_workout_ai_mode"],
+            "next_morning_adjustment_mode": trigger_policy["next_morning_adjustment_mode"],
+            "garmin_push_mode": trigger_policy["garmin_push_mode"],
+            "auto_api_enabled": trigger_policy["auto_api_enabled"],
+            "max_ai_calls_per_day": trigger_policy["max_ai_calls_per_day"],
         },
         "required_output_schema": {
             "analysis_summary": "string",

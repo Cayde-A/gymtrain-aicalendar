@@ -36,7 +36,8 @@ def page(title: str, body: str) -> str:
     table {{ width: 100%; border-collapse: collapse; background: white; border: 1px solid #d1d5db; }}
     th, td {{ border-bottom: 1px solid #e5e7eb; padding: 10px; text-align: left; vertical-align: middle; }}
     th {{ background: #f3f4f6; font-size: 13px; }}
-    input, textarea {{ box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 15px; background: white; }}
+    input, textarea, select {{ box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 15px; background: white; }}
+    input[type="checkbox"] {{ width: auto; }}
     textarea {{ min-height: 70px; }}
     button {{ padding: 10px 14px; border: 0; border-radius: 6px; background: #2563eb; color: white; font-weight: 700; cursor: pointer; }}
     button.secondary {{ background: #374151; }}
@@ -72,6 +73,15 @@ def numeric(value: object) -> str:
     return "" if value is None else html.escape(str(value))
 
 
+def nav() -> str:
+    return """<nav><a href="/">训练日</a><a href="/settings">触发设置</a><a href="/debug">调试观测</a></nav>"""
+
+
+def option(value: str, current: object, label: str) -> str:
+    selected = " selected" if value == str(current) else ""
+    return f'<option value="{safe(value)}"{selected}>{safe(label)}</option>'
+
+
 class ReviewServer:
     def __init__(self, db_path: Path):
         self.db_path = db_path
@@ -93,7 +103,7 @@ class ReviewServer:
                   <td><a href="/day?date={safe(training_day.get("training_date"))}">查看当天</a></td>
                 </tr>"""
             )
-        body = """<nav><a href="/">训练日</a><a href="/debug">调试观测</a></nav><h1>TrainingOS 训练日</h1>"""
+        body = f"""{nav()}<h1>TrainingOS 训练日</h1>"""
         if rows:
             body += f"""<table>
               <thead><tr><th>日期</th><th>活动数</th><th>训练内容</th><th></th></tr></thead>
@@ -118,7 +128,7 @@ class ReviewServer:
                   <td><a href="/session?id={safe(session.get("id"))}">校正单条</a></td>
                 </tr>"""
             )
-        body = f"""<nav><a href="/">训练日</a><a href="/debug">调试观测</a></nav>
+        body = f"""{nav()}
         <p><a href="/">返回训练日</a></p>
         <h1>{safe(training_date)} 训练</h1>
         <p class="muted">同一天的 Garmin 活动会作为同一组训练进入 AI 复盘。</p>
@@ -163,7 +173,7 @@ class ReviewServer:
                 </tr>"""
             )
         saved_notice = "<p class='muted'>已保存校正。</p>" if saved else ""
-        body = f"""<nav><a href="/">训练校正</a><a href="/debug">调试观测</a></nav>
+        body = f"""{nav()}
         <p><a href="/">返回列表</a></p>
         <h1>{safe(session.get("activity_name") or "Completed Workout")}</h1>
         {saved_notice}
@@ -206,7 +216,7 @@ class ReviewServer:
                   <td><pre>{safe(json.dumps(event.get("details", {}), ensure_ascii=False, indent=2))}</pre></td>
                 </tr>"""
             )
-        body = """<nav><a href="/">训练校正</a><a href="/debug">调试观测</a></nav>
+        body = f"""{nav()}
         <h1>调试观测</h1>
         <p class="muted">这里显示本机调试事件：Garmin 导入、写入 SQLite、保存校正、生成 AI 摘要。日志位于本机 data/debug_events.jsonl，已被 Git 忽略。</p>
         <form method="post" action="/debug/clear"><button type="submit">清空调试日志</button></form>
@@ -229,7 +239,7 @@ class ReviewServer:
         payload = html.escape(json.dumps(summary, indent=2, ensure_ascii=False))
         return page(
             "TrainingOS AI Summary",
-            f"<nav><a href='/'>训练校正</a><a href='/debug'>调试观测</a></nav><p><a href='/session?id={safe(session_id)}'>返回校正</a></p><h1>AI 输入摘要</h1><pre>{payload}</pre>",
+            f"{nav()}<p><a href='/session?id={safe(session_id)}'>返回校正</a></p><h1>AI 输入摘要</h1><pre>{payload}</pre>",
         )
 
     def analysis_page(self, session_id: str) -> str:
@@ -255,7 +265,7 @@ class ReviewServer:
                     f"<td>{safe(review.get('summary'))}</td></tr>"
                 )
             review_rows += "</tbody></table>"
-        body = f"""<nav><a href="/">训练校正</a><a href="/debug">调试观测</a></nav>
+        body = f"""{nav()}
         <p><a href="/session?id={safe(session_id)}">返回校正</a></p>
         <h1>AI 复盘与初版计划</h1>
         <p class="muted">这是低算力手动流程。复制标准输入到 ChatGPT，要求返回 JSON，然后把结果粘贴回来保存。初版计划会在第二天恢复指标同步后再微调。</p>
@@ -297,7 +307,7 @@ class ReviewServer:
                     f"<td>{safe(review.get('summary'))}</td></tr>"
                 )
             review_rows += "</tbody></table>"
-        body = f"""<nav><a href="/">训练日</a><a href="/debug">调试观测</a></nav>
+        body = f"""{nav()}
         <p><a href="/day?date={safe(training_date)}">返回当天训练</a></p>
         <h1>{safe(training_date)} AI 复盘与初版计划</h1>
         <p class="muted">这是当天聚合复盘。同一天的多条 Garmin 活动会作为一个训练整体进入标准 AI 输入包。</p>
@@ -334,6 +344,69 @@ class ReviewServer:
             trainingos_db.save_day_ai_review_response(connection, training_date, response_text)
         return self.day_analysis_page(training_date)
 
+    def settings_page(self, saved: bool = False) -> str:
+        with self.connection() as connection:
+            policy = trainingos_db.get_ai_trigger_policy(connection)
+        checked = " checked" if policy.get("auto_api_enabled") else ""
+        saved_notice = "<p class='muted'>触发设置已保存。</p>" if saved else ""
+        body = f"""{nav()}
+        <h1>AI / API 触发设置</h1>
+        {saved_notice}
+        <p class="muted">当前版本默认不直接调用 API。这里先定义未来自动化的触发规则，用来节省算力并降低误触发风险。</p>
+        <form method="post" action="/settings/save">
+          <div class="summary">
+            <div class="field">
+              <label>训练后复盘</label>
+              <select name="post_workout_ai_mode">
+                {option("manual_copy_paste", policy.get("post_workout_ai_mode"), "手动复制粘贴")}
+                {option("user_confirmed_api", policy.get("post_workout_ai_mode"), "点击确认后调用 API")}
+                {option("auto_api_after_correction", policy.get("post_workout_ai_mode"), "保存校正后自动调用 API")}
+              </select>
+            </div>
+            <div class="field">
+              <label>次日恢复微调</label>
+              <select name="next_morning_adjustment_mode">
+                {option("manual_copy_paste", policy.get("next_morning_adjustment_mode"), "手动复制粘贴")}
+                {option("user_confirmed_api", policy.get("next_morning_adjustment_mode"), "点击确认后调用 API")}
+                {option("auto_api_after_recovery_sync", policy.get("next_morning_adjustment_mode"), "恢复数据同步后自动调用 API")}
+              </select>
+            </div>
+            <div class="field">
+              <label>推送 Garmin</label>
+              <select name="garmin_push_mode">
+                {option("manual_only", policy.get("garmin_push_mode"), "仅手动")}
+                {option("user_confirmed", policy.get("garmin_push_mode"), "点击确认后推送")}
+                {option("auto_after_final_plan", policy.get("garmin_push_mode"), "最终计划生成后自动推送")}
+              </select>
+            </div>
+            <div class="field">
+              <label>每日 AI 调用上限</label>
+              <input name="max_ai_calls_per_day" type="number" min="0" max="20" value="{numeric(policy.get("max_ai_calls_per_day"))}">
+            </div>
+          </div>
+          <div class="field">
+            <label><input name="auto_api_enabled" type="checkbox" value="1"{checked}> 允许自动 API 调用</label>
+            <p class="muted">关闭时，即使某个步骤选了自动模式，也只显示手动确认入口，不会自动调用。</p>
+          </div>
+          <div class="row-actions">
+            <button type="submit">保存触发设置</button>
+          </div>
+        </form>
+        <h2>推荐默认值</h2>
+        <p class="muted">训练后复盘：手动复制粘贴。次日恢复微调：点击确认后调用 API。推送 Garmin：点击确认后推送。</p>"""
+        return page("TrainingOS Trigger Settings", body)
+
+    def save_settings(self, form_data: dict[str, list[str]]) -> str:
+        payload = {
+            "post_workout_ai_mode": form_data.get("post_workout_ai_mode", [""])[0],
+            "next_morning_adjustment_mode": form_data.get("next_morning_adjustment_mode", [""])[0],
+            "garmin_push_mode": form_data.get("garmin_push_mode", [""])[0],
+            "auto_api_enabled": form_data.get("auto_api_enabled", [""])[0] == "1",
+            "max_ai_calls_per_day": form_data.get("max_ai_calls_per_day", [""])[0],
+        }
+        with self.connection() as connection:
+            trainingos_db.update_ai_trigger_policy(connection, payload)
+        return self.settings_page(saved=True)
 
     def save(self, form_data: dict[str, list[str]]) -> str:
         session_id = form_data.get("session_id", [""])[0]
@@ -412,6 +485,9 @@ def make_handler(app: ReviewServer):
             if parsed.path == "/debug":
                 self.respond(app.debug_page())
                 return
+            if parsed.path == "/settings":
+                self.respond(app.settings_page())
+                return
             self.send_error(404)
 
         def do_POST(self) -> None:
@@ -428,6 +504,11 @@ def make_handler(app: ReviewServer):
                 length = int(self.headers.get("Content-Length", "0"))
                 body = self.rfile.read(length).decode("utf-8")
                 self.respond(app.save_day_ai_analysis(parse_qs(body)))
+                return
+            if self.path == "/settings/save":
+                length = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(length).decode("utf-8")
+                self.respond(app.save_settings(parse_qs(body)))
                 return
             if self.path != "/save":
                 self.send_error(404)

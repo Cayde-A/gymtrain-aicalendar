@@ -147,6 +147,52 @@ class TrainingOSDbTestCase(unittest.TestCase):
         self.assertEqual(packet["metrics"]["set_count"], 1)
         self.assertAlmostEqual(packet["metrics"]["total_volume_kg"], 500)
         self.assertIn("initial_next_day_plan", packet["required_output_schema"])
+        self.assertEqual(packet["trigger_policy"]["post_workout_ai_mode"], "manual_copy_paste")
+        self.assertFalse(packet["trigger_policy"]["auto_api_enabled"])
+
+    def test_ai_trigger_policy_defaults_are_conservative(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "trainingos.sqlite"
+            trainingos_db.init_db(db_path)
+            with trainingos_db.connect(db_path) as connection:
+                policy = trainingos_db.get_ai_trigger_policy(connection)
+        self.assertEqual(policy["post_workout_ai_mode"], "manual_copy_paste")
+        self.assertEqual(policy["next_morning_adjustment_mode"], "user_confirmed_api")
+        self.assertEqual(policy["garmin_push_mode"], "user_confirmed")
+        self.assertFalse(policy["auto_api_enabled"])
+        self.assertEqual(policy["max_ai_calls_per_day"], 2)
+
+    def test_update_ai_trigger_policy_persists_and_is_included_in_packet(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "trainingos.sqlite"
+            trainingos_db.init_db(db_path)
+            with trainingos_db.connect(db_path) as connection:
+                trainingos_db.update_ai_trigger_policy(
+                    connection,
+                    {
+                        "post_workout_ai_mode": "user_confirmed_api",
+                        "next_morning_adjustment_mode": "auto_api_after_recovery_sync",
+                        "garmin_push_mode": "manual_only",
+                        "auto_api_enabled": True,
+                        "max_ai_calls_per_day": 5,
+                    },
+                )
+                session_id = trainingos_db.save_imported_workout(
+                    connection,
+                    {
+                        "provider": "garmin",
+                        "external_activity_id": "policy-packet",
+                        "completed_at": "2026-08-02 11:30:00",
+                        "session_type": "strength_training",
+                        "sets": [],
+                    },
+                )
+                packet = trainingos_db.build_ai_review_packet(connection, session_id)
+        self.assertEqual(packet["trigger_policy"]["post_workout_ai_mode"], "user_confirmed_api")
+        self.assertEqual(packet["trigger_policy"]["next_morning_adjustment_mode"], "auto_api_after_recovery_sync")
+        self.assertEqual(packet["trigger_policy"]["garmin_push_mode"], "manual_only")
+        self.assertTrue(packet["trigger_policy"]["auto_api_enabled"])
+        self.assertEqual(packet["trigger_policy"]["max_ai_calls_per_day"], 5)
 
     def test_save_ai_review_response_persists_structured_json(self):
         response = """

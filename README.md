@@ -30,6 +30,7 @@ The project starts from TrainingOS V4: a PR-centered training methodology with G
 - [Garmin Field Mapping](docs/12_garmin_field_mapping.md)
 - [Preset Training Rounds](docs/13_preset_training_rounds.md)
 - [Local-First Monthly Sync Strategy](docs/14_local_first_monthly_sync.md)
+- [AI Trigger Policy](docs/15_ai_trigger_policy.md)
 - [Local SQLite Schema](schema/local_sqlite.sql)
 - [Backlog](BACKLOG.md)
 - [Artifacts](artifacts/README.md)
@@ -133,6 +134,20 @@ TrainingOS groups same-day Garmin activities into one training day
 -> user pastes JSON back into TrainingOS
 -> TrainingOS saves it to ai_reviews
 ```
+
+API calls are controlled by a local trigger policy. Open:
+
+```text
+http://127.0.0.1:8787/settings
+```
+
+Default behavior is conservative:
+
+- post-workout AI review uses manual copy/paste;
+- next-morning recovery adjustment requires user confirmation before API use;
+- Garmin workout push requires user confirmation;
+- automatic API calls are disabled unless explicitly enabled;
+- daily AI calls are capped by a local setting.
 
 During debugging, open:
 
