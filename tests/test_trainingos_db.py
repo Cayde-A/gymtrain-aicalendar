@@ -194,6 +194,76 @@ class TrainingOSDbTestCase(unittest.TestCase):
         self.assertTrue(packet["trigger_policy"]["auto_api_enabled"])
         self.assertEqual(packet["trigger_policy"]["max_ai_calls_per_day"], 5)
 
+    def test_evaluate_api_trigger_blocks_manual_default(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "trainingos.sqlite"
+            trainingos_db.init_db(db_path)
+            with trainingos_db.connect(db_path) as connection:
+                decision = trainingos_db.evaluate_api_trigger(connection, "post_workout_ai")
+                log_id = trainingos_db.record_api_trigger_decision(connection, decision)
+                logs = trainingos_db.get_recent_api_trigger_logs(connection)
+        self.assertFalse(decision["allowed"])
+        self.assertEqual(decision["status"], "manual")
+        self.assertEqual(decision["reason"], "manual_mode_selected")
+        self.assertTrue(log_id.startswith("api_trigger_"))
+        self.assertEqual(logs[0]["trigger_name"], "post_workout_ai")
+
+    def test_evaluate_api_trigger_allows_user_confirmed_mode_only_after_confirmation(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "trainingos.sqlite"
+            trainingos_db.init_db(db_path)
+            with trainingos_db.connect(db_path) as connection:
+                trainingos_db.update_ai_trigger_policy(
+                    connection,
+                    {
+                        "post_workout_ai_mode": "user_confirmed_api",
+                        "next_morning_adjustment_mode": "user_confirmed_api",
+                        "garmin_push_mode": "user_confirmed",
+                        "auto_api_enabled": False,
+                        "max_ai_calls_per_day": 2,
+                    },
+                )
+                before_confirmation = trainingos_db.evaluate_api_trigger(connection, "post_workout_ai")
+                after_confirmation = trainingos_db.evaluate_api_trigger(
+                    connection,
+                    "post_workout_ai",
+                    user_confirmed=True,
+                )
+        self.assertFalse(before_confirmation["allowed"])
+        self.assertEqual(before_confirmation["status"], "needs_confirmation")
+        self.assertTrue(after_confirmation["allowed"])
+        self.assertEqual(after_confirmation["status"], "allowed")
+
+    def test_evaluate_api_trigger_enforces_daily_ai_call_cap(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "trainingos.sqlite"
+            trainingos_db.init_db(db_path)
+            with trainingos_db.connect(db_path) as connection:
+                trainingos_db.update_ai_trigger_policy(
+                    connection,
+                    {
+                        "post_workout_ai_mode": "user_confirmed_api",
+                        "next_morning_adjustment_mode": "user_confirmed_api",
+                        "garmin_push_mode": "user_confirmed",
+                        "auto_api_enabled": False,
+                        "max_ai_calls_per_day": 1,
+                    },
+                )
+                first_decision = trainingos_db.evaluate_api_trigger(
+                    connection,
+                    "post_workout_ai",
+                    user_confirmed=True,
+                )
+                trainingos_db.record_api_trigger_decision(connection, first_decision)
+                capped_decision = trainingos_db.evaluate_api_trigger(
+                    connection,
+                    "next_morning_adjustment",
+                    user_confirmed=True,
+                )
+        self.assertTrue(first_decision["allowed"])
+        self.assertFalse(capped_decision["allowed"])
+        self.assertEqual(capped_decision["reason"], "daily_ai_call_cap_reached")
+
     def test_save_ai_review_response_persists_structured_json(self):
         response = """
         {

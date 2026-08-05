@@ -344,15 +344,44 @@ class ReviewServer:
             trainingos_db.save_day_ai_review_response(connection, training_date, response_text)
         return self.day_analysis_page(training_date)
 
-    def settings_page(self, saved: bool = False) -> str:
+    def settings_page(self, saved: bool = False, trigger_decision: dict[str, object] | None = None) -> str:
         with self.connection() as connection:
             policy = trainingos_db.get_ai_trigger_policy(connection)
+            ai_calls_today = trainingos_db.count_ai_calls_for_date(connection)
+            trigger_logs = trainingos_db.get_recent_api_trigger_logs(connection, 8)
         checked = " checked" if policy.get("auto_api_enabled") else ""
         saved_notice = "<p class='muted'>触发设置已保存。</p>" if saved else ""
+        decision_notice = ""
+        if trigger_decision:
+            decision_notice = (
+                "<div class='empty'>"
+                f"触发检查：{safe(trigger_decision.get('trigger_name'))} / "
+                f"{safe(trigger_decision.get('status'))} / "
+                f"{safe(trigger_decision.get('reason'))}"
+                "</div>"
+            )
+        log_rows = ""
+        if trigger_logs:
+            log_rows = "<h2>最近触发判定</h2><table><thead><tr><th>时间</th><th>触发</th><th>状态</th><th>原因</th></tr></thead><tbody>"
+            for log in trigger_logs:
+                log_rows += (
+                    f"<tr><td>{safe(log.get('created_at'))}</td>"
+                    f"<td>{safe(log.get('trigger_name'))}</td>"
+                    f"<td>{safe(log.get('status'))}</td>"
+                    f"<td>{safe(log.get('reason'))}</td></tr>"
+                )
+            log_rows += "</tbody></table>"
         body = f"""{nav()}
         <h1>AI / API 触发设置</h1>
         {saved_notice}
+        {decision_notice}
         <p class="muted">当前版本默认不直接调用 API。这里先定义未来自动化的触发规则，用来节省算力并降低误触发风险。</p>
+        <div class="summary">
+          <div class="field"><label>今日 AI 调用计数</label><input value="{safe(ai_calls_today)} / {safe(policy.get("max_ai_calls_per_day"))}" disabled></div>
+          <div class="field"><label>自动 API 总开关</label><input value="{safe("已开启" if policy.get("auto_api_enabled") else "已关闭")}" disabled></div>
+          <div class="field"><label>训练后复盘模式</label><input value="{safe(policy.get("post_workout_ai_mode"))}" disabled></div>
+          <div class="field"><label>次日微调模式</label><input value="{safe(policy.get("next_morning_adjustment_mode"))}" disabled></div>
+        </div>
         <form method="post" action="/settings/save">
           <div class="summary">
             <div class="field">
@@ -393,7 +422,15 @@ class ReviewServer:
           </div>
         </form>
         <h2>推荐默认值</h2>
-        <p class="muted">训练后复盘：手动复制粘贴。次日恢复微调：点击确认后调用 API。推送 Garmin：点击确认后推送。</p>"""
+        <p class="muted">训练后复盘：手动复制粘贴。次日恢复微调：点击确认后调用 API。推送 Garmin：点击确认后推送。</p>
+        <h2>触发检查</h2>
+        <p class="muted">这些按钮只检查并记录闸门判定，不会调用外部 API。</p>
+        <div class="row-actions">
+          <form method="post" action="/settings/check"><input type="hidden" name="trigger_name" value="post_workout_ai"><button type="submit">检查训练后复盘</button></form>
+          <form method="post" action="/settings/check"><input type="hidden" name="trigger_name" value="next_morning_adjustment"><button type="submit">检查次日微调</button></form>
+          <form method="post" action="/settings/check"><input type="hidden" name="trigger_name" value="garmin_push"><button type="submit">检查 Garmin 推送</button></form>
+        </div>
+        {log_rows}"""
         return page("TrainingOS Trigger Settings", body)
 
     def save_settings(self, form_data: dict[str, list[str]]) -> str:
@@ -407,6 +444,18 @@ class ReviewServer:
         with self.connection() as connection:
             trainingos_db.update_ai_trigger_policy(connection, payload)
         return self.settings_page(saved=True)
+
+    def check_trigger(self, form_data: dict[str, list[str]]) -> str:
+        trigger_name = form_data.get("trigger_name", [""])[0]
+        user_confirmed = form_data.get("user_confirmed", [""])[0] == "1"
+        with self.connection() as connection:
+            decision = trainingos_db.evaluate_api_trigger(connection, trigger_name, user_confirmed=user_confirmed)
+            trainingos_db.record_api_trigger_decision(
+                connection,
+                decision,
+                context={"source": "settings_page_check", "user_confirmed": user_confirmed},
+            )
+        return self.settings_page(trigger_decision=decision)
 
     def save(self, form_data: dict[str, list[str]]) -> str:
         session_id = form_data.get("session_id", [""])[0]
@@ -509,6 +558,11 @@ def make_handler(app: ReviewServer):
                 length = int(self.headers.get("Content-Length", "0"))
                 body = self.rfile.read(length).decode("utf-8")
                 self.respond(app.save_settings(parse_qs(body)))
+                return
+            if self.path == "/settings/check":
+                length = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(length).decode("utf-8")
+                self.respond(app.check_trigger(parse_qs(body)))
                 return
             if self.path != "/save":
                 self.send_error(404)

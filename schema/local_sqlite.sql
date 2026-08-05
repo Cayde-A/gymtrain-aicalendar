@@ -241,6 +241,17 @@ create table if not exists ai_trigger_policies (
   updated_at text not null default current_timestamp
 );
 
+create table if not exists api_trigger_logs (
+  id text primary key,
+  athlete_id text not null references athletes(id),
+  trigger_name text not null,
+  mode text not null,
+  status text not null,
+  reason text,
+  context_json text,
+  created_at text not null default current_timestamp
+);
+
 create index if not exists idx_planned_sessions_athlete_start
   on planned_sessions (athlete_id, planned_start);
 
@@ -255,3 +266,6 @@ create index if not exists idx_daily_recovery_athlete_date
 
 create index if not exists idx_raw_import_cache_retention
   on raw_import_cache (retention_until, deleted_at);
+
+create index if not exists idx_api_trigger_logs_athlete_created
+  on api_trigger_logs (athlete_id, created_at);

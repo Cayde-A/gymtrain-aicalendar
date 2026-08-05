@@ -8,6 +8,7 @@ import json
 import sqlite3
 import sys
 import uuid
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,15 @@ DEFAULT_AI_TRIGGER_POLICY = {
     "auto_api_enabled": 0,
     "max_ai_calls_per_day": 2,
 }
+API_TRIGGER_MODE_FIELDS = {
+    "post_workout_ai": "post_workout_ai_mode",
+    "next_morning_adjustment": "next_morning_adjustment_mode",
+    "garmin_push": "garmin_push_mode",
+}
+AI_CALL_TRIGGER_NAMES = {"post_workout_ai", "next_morning_adjustment"}
+MANUAL_ONLY_MODES = {"manual_copy_paste", "manual_only"}
+USER_CONFIRMED_MODES = {"user_confirmed_api", "user_confirmed"}
+AUTO_MODES = {"auto_api_after_correction", "auto_api_after_recovery_sync", "auto_after_final_plan"}
 
 try:
     from . import trainingos_observability
@@ -190,6 +200,138 @@ def update_ai_trigger_policy(
         },
     )
     return saved_policy
+
+
+def count_ai_calls_for_date(
+    connection: sqlite3.Connection,
+    call_date: str | None = None,
+    athlete_id: str = DEFAULT_ATHLETE_ID,
+) -> int:
+    target_date = call_date or date.today().isoformat()
+    row = connection.execute(
+        """
+        select count(*) as call_count
+        from api_trigger_logs
+        where athlete_id = ?
+          and trigger_name in ('post_workout_ai', 'next_morning_adjustment')
+          and status in ('allowed', 'executed')
+          and substr(created_at, 1, 10) = ?
+        """,
+        (athlete_id, target_date),
+    ).fetchone()
+    return int(row["call_count"] if row else 0)
+
+
+def evaluate_api_trigger(
+    connection: sqlite3.Connection,
+    trigger_name: str,
+    user_confirmed: bool = False,
+    athlete_id: str = DEFAULT_ATHLETE_ID,
+) -> dict[str, Any]:
+    policy = get_ai_trigger_policy(connection, athlete_id)
+    mode_field = API_TRIGGER_MODE_FIELDS.get(trigger_name)
+    if mode_field is None:
+        return {
+            "trigger_name": trigger_name,
+            "mode": "unknown",
+            "allowed": False,
+            "status": "blocked",
+            "reason": "unknown_trigger",
+            "ai_calls_today": count_ai_calls_for_date(connection, athlete_id=athlete_id),
+            "max_ai_calls_per_day": policy["max_ai_calls_per_day"],
+        }
+    mode = str(policy[mode_field])
+    ai_calls_today = count_ai_calls_for_date(connection, athlete_id=athlete_id)
+    max_calls = int(policy["max_ai_calls_per_day"])
+    if trigger_name in AI_CALL_TRIGGER_NAMES and ai_calls_today >= max_calls:
+        return {
+            "trigger_name": trigger_name,
+            "mode": mode,
+            "allowed": False,
+            "status": "blocked",
+            "reason": "daily_ai_call_cap_reached",
+            "ai_calls_today": ai_calls_today,
+            "max_ai_calls_per_day": max_calls,
+        }
+    if mode in MANUAL_ONLY_MODES:
+        allowed = False
+        status = "manual"
+        reason = "manual_mode_selected"
+    elif mode in USER_CONFIRMED_MODES:
+        allowed = bool(user_confirmed)
+        status = "allowed" if allowed else "needs_confirmation"
+        reason = "user_confirmed" if allowed else "user_confirmation_required"
+    elif mode in AUTO_MODES:
+        allowed = bool(policy["auto_api_enabled"])
+        status = "allowed" if allowed else "blocked"
+        reason = "auto_api_enabled" if allowed else "auto_api_disabled"
+    else:
+        allowed = False
+        status = "blocked"
+        reason = "unsupported_mode"
+    return {
+        "trigger_name": trigger_name,
+        "mode": mode,
+        "allowed": allowed,
+        "status": status,
+        "reason": reason,
+        "ai_calls_today": ai_calls_today,
+        "max_ai_calls_per_day": max_calls,
+    }
+
+
+def record_api_trigger_decision(
+    connection: sqlite3.Connection,
+    decision: dict[str, Any],
+    context: dict[str, Any] | None = None,
+    athlete_id: str = DEFAULT_ATHLETE_ID,
+) -> str:
+    ensure_default_athlete(connection)
+    log_id = new_id("api_trigger")
+    connection.execute(
+        """
+        insert into api_trigger_logs (
+          id, athlete_id, trigger_name, mode, status, reason, context_json
+        )
+        values (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            log_id,
+            athlete_id,
+            decision.get("trigger_name"),
+            decision.get("mode"),
+            decision.get("status"),
+            decision.get("reason"),
+            json.dumps(context or {}, ensure_ascii=False, sort_keys=True),
+        ),
+    )
+    trainingos_observability.record_event(
+        "api_trigger_decision_recorded",
+        details={
+            "trigger_name": decision.get("trigger_name"),
+            "status": decision.get("status"),
+            "reason": decision.get("reason"),
+        },
+    )
+    return log_id
+
+
+def get_recent_api_trigger_logs(
+    connection: sqlite3.Connection,
+    limit: int = 20,
+    athlete_id: str = DEFAULT_ATHLETE_ID,
+) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        """
+        select *
+        from api_trigger_logs
+        where athlete_id = ?
+        order by created_at desc
+        limit ?
+        """,
+        (athlete_id, limit),
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def new_id(prefix: str) -> str:

@@ -58,7 +58,25 @@ If it is off, automatic trigger modes do not execute automatically. The UI shoul
 
 `max_ai_calls_per_day` limits model calls for a local user.
 
-The MVP stores this policy first. A later API implementation should enforce the cap before making any model request.
+TrainingOS enforces this through the API trigger gate before any future model request is made.
+
+## Trigger Gate
+
+The local trigger gate returns one of these statuses:
+
+- `manual`: the selected mode is manual copy/paste or manual-only.
+- `needs_confirmation`: the mode allows API use, but the user has not confirmed this specific action.
+- `allowed`: the action may proceed.
+- `blocked`: the action must not proceed.
+
+The gate checks:
+
+1. the selected mode for the trigger;
+2. whether the user explicitly confirmed the action;
+3. whether automatic API calls are globally enabled;
+4. whether the daily AI call cap has already been reached.
+
+Each gate decision can be recorded in `api_trigger_logs` for observability.
 
 ## Current MVP Behavior
 
@@ -71,3 +89,5 @@ http://127.0.0.1:8787/settings
 The AI review packet includes the active `trigger_policy` so each analysis can be audited later.
 
 Current implementation still uses the manual copy/paste path. The policy is a guardrail for the next API integration step.
+
+The settings page also provides trigger checks. These checks record local gate decisions but do not call external APIs.
