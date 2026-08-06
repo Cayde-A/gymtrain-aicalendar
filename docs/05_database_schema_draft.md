@@ -1,6 +1,10 @@
 # Database Schema Draft
 
-This schema is a first draft for Supabase PostgreSQL. It focuses on workout planning, set-level logging, PR tracking, Garmin recovery context, and AI recommendations.
+This schema is a first draft for a local-first TrainingOS database.
+
+The MVP should use local SQLite as the complete private source of truth. Supabase should initially receive only monthly minimized summaries.
+
+The SQL below is written in PostgreSQL style for clarity and future Supabase compatibility. The same entities should be mirrored in SQLite with practical local types during MVP implementation.
 
 ## Entity Overview
 
@@ -17,6 +21,10 @@ daily_recovery_metrics
 body_metrics
 calendar_events
 ai_reviews
+raw_import_cache
+monthly_sync_batches
+cloud_monthly_summaries
+privacy_retention_policies
 ```
 
 ## Draft SQL
@@ -181,12 +189,74 @@ create table ai_reviews (
   risk_flags jsonb,
   created_at timestamptz not null default now()
 );
+
+create table raw_import_cache (
+  id uuid primary key default gen_random_uuid(),
+  athlete_id uuid not null references athletes(id),
+  provider text not null,
+  import_type text not null,
+  source_date date,
+  local_path text,
+  payload_hash text,
+  retention_until date not null,
+  deleted_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create table monthly_sync_batches (
+  id uuid primary key default gen_random_uuid(),
+  athlete_id uuid not null references athletes(id),
+  sync_month date not null,
+  status text not null default 'pending',
+  summary_payload_hash text,
+  uploaded_at timestamptz,
+  error_message text,
+  created_at timestamptz not null default now(),
+  unique (athlete_id, sync_month)
+);
+
+create table cloud_monthly_summaries (
+  id uuid primary key default gen_random_uuid(),
+  athlete_id uuid not null references athletes(id),
+  sync_batch_id uuid references monthly_sync_batches(id),
+  sync_month date not null,
+  training_days integer,
+  session_count integer,
+  session_type_counts jsonb,
+  exercise_volume_summary jsonb,
+  best_sets jsonb,
+  pr_count integer,
+  estimated_1rm_trends jsonb,
+  recovery_summary jsonb,
+  ai_monthly_summary text,
+  next_month_focus text,
+  created_at timestamptz not null default now(),
+  unique (athlete_id, sync_month)
+);
+
+create table privacy_retention_policies (
+  id uuid primary key default gen_random_uuid(),
+  athlete_id uuid not null references athletes(id),
+  raw_cache_retention_days integer not null default 30,
+  delete_sync_package_after_upload boolean not null default true,
+  upload_raw_garmin_payloads boolean not null default false,
+  upload_private_notes boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
 ```
+
+## Local-First Privacy Rules
+
+- Local SQLite stores complete private training and recovery history.
+- Supabase stores monthly minimized summaries by default.
+- Raw Garmin payloads stay local and temporary.
+- Sync packages are deleted after successful upload.
+- Tokens, local databases, raw exports, and real workout data are ignored by Git.
 
 ## Open Schema Questions
 
 - Whether nutrition should be in V5 or delayed to V6.
 - Whether Gunyama-specific equipment should be a separate table or metadata in `exercise_catalog`.
 - Whether planned exercises need a separate `planned_exercises` table before MVP.
-- Whether Garmin data will arrive from official API, export, third-party sync, or manual entry first.
-
+- Whether monthly summaries need exercise-level detail by default or only aggregate trends.

@@ -4,6 +4,15 @@
 
 ### Added
 
+- Added local-first monthly sync strategy for privacy-aware TrainingOS data handling.
+- Updated architecture and schema drafts so local SQLite is the complete private source of truth and Supabase is a minimized monthly sync layer.
+- Added local SQLite storage helpers, completed Garmin activity import MVP, and local workout correction UI.
+- Added local debug event timeline for observing Garmin import, SQLite writes, correction saves, and AI summary generation.
+- Fixed Garmin completed-set parsing for `repetitionCount` and gram-based weight values.
+- Documented completed activity and strength set field mappings, and centralized Garmin activity/set mapping rules in code.
+- Updated manual post-workout AI analysis flow to generate an initial next-day plan draft, then defer final adjustment until next-day recovery sync.
+- Added standardized low-compute AI review packet flow and manual AI JSON response saving into `ai_reviews`.
+- Added same-day training grouping so multiple Garmin activities on one date are reviewed as one workout.
 - Added Garmin retry test result documenting Garmin SSO `429 Too Many Requests` state.
 - Clarified that the next valid test is one token-initialization run after rate limit clears.
 - Added successful Garmin import test result with token initialization and partial normalized metrics.
@@ -11,6 +20,11 @@
 - Added Garmin Field Mapping documentation.
 - Added preset training rounds design.
 - Updated architecture, roadmap, usage flow, and backlog so TrainingOS generates workout rounds before Garmin execution.
+- Added first planned workout for 2026-08-02.
+- Successfully uploaded, scheduled, and pushed a Garmin Strength workout to Garmin Connect/device sync.
+- Added Garmin workout push test record and separate Python 3.12 workout requirements.
+- Confirmed Garmin Connect calendar and Garmin watch sync success for the first TrainingOS planned workout.
+- Confirmed stable Garmin watch entry path through Strength -> Training -> Training Calendar.
 
 ## [0.1.5] - 2026-07-31
 

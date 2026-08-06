@@ -19,6 +19,7 @@ import getpass
 import json
 import os
 import sys
+import contextlib
 from pathlib import Path
 from typing import Any, Callable
 
@@ -126,25 +127,37 @@ def import_garmin_client() -> Any:
 
 
 def has_tokens(tokenstore: Path) -> bool:
-    return (tokenstore / "oauth1_token.json").exists() and (tokenstore / "oauth2_token.json").exists()
+    return (
+        ((tokenstore / "oauth1_token.json").exists() and (tokenstore / "oauth2_token.json").exists())
+        or (tokenstore / "garmin_tokens.json").exists()
+    )
 
 
 def login(email: str | None, password: str | None, tokenstore: str) -> Any:
     Garmin = import_garmin_client()
     tokenstore_path = Path(tokenstore).expanduser()
-    if has_tokens(tokenstore_path):
-        client = Garmin()
-        client.login(str(tokenstore_path))
-        return client
 
     if not email:
-        email = input("Garmin email: ").strip()
+        email = os.getenv("GARMIN_EMAIL")
     if not password:
-        password = getpass.getpass("Garmin password: ")
-    client = Garmin(email, password)
-    client.login()
+        password = os.getenv("GARMIN_PASSWORD")
+
+    if not has_tokens(tokenstore_path):
+        if not email:
+            email = input("Garmin email: ").strip()
+        if not password:
+            password = getpass.getpass("Garmin password: ")
+
+    client = Garmin(email, password) if email and password else Garmin()
+    try:
+        client.login(str(tokenstore_path))
+    except TypeError:
+        client.login()
     tokenstore_path.mkdir(parents=True, exist_ok=True)
-    client.garth.dump(str(tokenstore_path))
+    garth = getattr(client, "garth", None)
+    if garth is not None:
+        with contextlib.suppress(Exception):
+            garth.dump(str(tokenstore_path))
     return client
 
 
@@ -339,9 +352,13 @@ def normalize_day(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
     sleep_seconds = first_number(mapped_payload, FIELD_MAPPINGS["sleep_duration_minutes"])
+    if sleep_seconds is None:
+        sleep_seconds = deep_find_number(sleep, {"sleeptimeseconds", "sleepdurationseconds"})
     sleep_minutes = round(sleep_seconds / 60) if isinstance(sleep_seconds, (int, float)) else None
     recovery_time = first_number(mapped_payload, FIELD_MAPPINGS["recovery_time_hours"])
     recovery_time_hours = round(recovery_time / 3600, 2) if isinstance(recovery_time, (int, float)) else None
+    if recovery_time_hours is None:
+        recovery_time_hours = deep_find_number(stats, {"recoverytimehours"})
 
     return {
         "provider": "garmin",

@@ -9,35 +9,52 @@ Garmin Connect
         |
 Garmin Provider Sync
         |
-Supabase PostgreSQL  <---- Mobile/Web Logging App
-        |
-        +---- Google Calendar Sync
-        |
-        +---- Dashboard
+Local SQLite  <---- Mobile/Web Logging App
         |
         +---- AI Coach
+        |
+        +---- Monthly Minimized Sync
+                 |
+                 +---- Supabase PostgreSQL
+                 |
+                 +---- Google Calendar Sync / Dashboard
 ```
 
 ## Core Decision
 
-Supabase should become the single source of truth.
+Local SQLite should be the default source of truth for private personal data.
 
-Garmin, Google Calendar, mobile input, and AI are all providers or consumers around the database.
+Supabase should be an optional cloud layer for monthly minimized summaries, backup, cross-device access, and future collaboration.
+
+Garmin, Google Calendar, mobile input, Supabase, and AI are all providers or consumers around the local-first data model.
 
 ## Components
+
+### Local SQLite
+
+Responsibilities:
+
+- complete private workout plans;
+- completed sessions;
+- set-level logs;
+- PR history;
+- normalized Garmin daily metrics;
+- AI recommendations and decision notes;
+- sync status and retention state.
+
+Local SQLite is not committed to Git.
 
 ### Supabase
 
 Responsibilities:
 
-- users and settings;
-- workout plans;
-- completed sessions;
-- set-level logs;
-- PR history;
-- Garmin daily metrics;
-- body metrics;
-- AI recommendations.
+- optional account and settings;
+- monthly minimized training summaries;
+- monthly recovery summaries;
+- approved AI monthly summaries;
+- cross-device backup and dashboard data.
+
+Supabase should not store Garmin raw payloads, OAuth tokens, device identifiers, or private notes by default.
 
 ### Garmin
 
@@ -101,32 +118,42 @@ Responsibilities:
 - suggest deload;
 - generate weekly and monthly reports.
 
-For MVP, AI review can be triggered through Apple Shortcuts and the ChatGPT app. For reliable V6 automation, AI review should run through a backend API workflow and save results directly to Supabase.
+For MVP, AI review can be triggered through Apple Shortcuts and the ChatGPT app. For reliable V6 automation, AI review should run through a backend API workflow and save results first to local SQLite, then optionally to Supabase as a minimized monthly summary.
 
 ## Data Flow
 
 ### Planned Workout
 
 ```text
-Garmin Recovery + PR History -> AI Coach -> Supabase Planned Rounds -> User
+Garmin Recovery + PR History -> AI Coach -> Local SQLite Planned Rounds -> User
 ```
 
 ### Completed Workout
 
 ```text
-Mobile/Web Log -> Supabase -> PR Calculation -> AI Review -> Next Target
+Mobile/Web Log -> Local SQLite -> PR Calculation -> AI Review -> Next Target
 ```
 
 ### Garmin Recovery
 
 ```text
-Garmin -> Provider Sync -> Supabase -> AI Readiness Context
+Garmin -> Provider Sync -> Local SQLite -> AI Readiness Context
 ```
 
 ### Calendar Update
 
 ```text
-Completed Session -> Summary Formatter -> Google Calendar Event Update
+Completed Session -> Summary Formatter -> Optional Google Calendar Event Update
+```
+
+### Monthly Cloud Sync
+
+```text
+Local SQLite
+-> Monthly minimized summary
+-> Supabase
+-> Delete temporary sync package
+-> Delete raw Garmin cache beyond retention window
 ```
 
 ## MVP Architecture
@@ -135,7 +162,7 @@ The MVP does not need native iOS development.
 
 Recommended MVP:
 
-- Supabase database;
+- local SQLite database;
 - simple mobile-friendly web app;
 - TrainingOS-generated planned training rounds;
 - manual workout correction/logging;
@@ -144,3 +171,5 @@ Recommended MVP:
 - AI review through exported summary.
 
 This tests the experience before investing in native notifications, watch integrations, or background media detection.
+
+Supabase should be introduced after the local loop works, starting with monthly minimized summaries rather than full raw data sync.

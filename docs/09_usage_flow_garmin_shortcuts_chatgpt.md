@@ -10,9 +10,11 @@ The goal is:
 TrainingOS generates planned training rounds
 -> User executes with Garmin Strength Activity
 -> Sync to Garmin Connect
--> Import to TrainingOS cloud database
--> Trigger analysis through Shortcut or API
--> Generate next-day training design
+-> Import to local TrainingOS database
+-> User corrects workout record
+-> Trigger post-workout analysis manually through Shortcut or API
+-> Generate initial next-day training draft
+-> Adjust the draft after next-day recovery import
 ```
 
 ## Feasibility
@@ -28,10 +30,16 @@ Garmin Strength Activity
 -> TrainingOS morning plan shown in PWA/Shortcut/Calendar
 -> Garmin Connect sync
 -> TrainingOS Garmin Provider import
--> Supabase stores normalized workout data
--> Apple Shortcut gathers today's summary
--> Shortcut opens ChatGPT with prepared prompt
--> ChatGPT returns analysis and next-day plan
+-> Local SQLite stores normalized workout data
+-> User corrects workout record
+-> User manually opens AI post-workout analysis and initial-plan draft
+-> TrainingOS shows compact JSON packet
+-> Same-day Garmin activities are grouped as one workout
+-> User sends packet to ChatGPT
+-> ChatGPT returns JSON only
+-> User pastes JSON back into TrainingOS
+-> TrainingOS saves ai_reviews and initial next-day plan draft
+-> Next-day Garmin recovery metrics refine the draft before final push
 ```
 
 Use this when:
@@ -62,17 +70,22 @@ Garmin Strength Activity
 -> TrainingOS planned rounds
 -> Garmin Connect sync
 -> Garmin Provider import
--> Supabase
+-> Local SQLite
+-> User correction or auto-validation
 -> Cloud Function
--> OpenAI API analysis
--> Save ai_reviews + next planned session
+-> OpenAI API post-workout analysis
+-> Save ai_reviews and initial next-day draft
+-> Next-day recovery import
+-> Adjust next planned session
+-> Optional monthly minimized Supabase sync
 -> Google Calendar update
 -> optional Shortcut notification
 ```
 
 Use this when:
 
-- next-day training should be generated without manual copy/paste;
+- post-workout analysis should be saved without manual copy/paste;
+- next-day training should have an initial draft before sleep data and a final adjustment after sleep data;
 - AI recommendations must be saved into the database;
 - calendar updates must be reliable;
 - the workflow should work even if the ChatGPT app UI changes.
@@ -128,14 +141,23 @@ Best for:
 7. Save workout and let Garmin Connect sync.
 8. TrainingOS imports the activity through Garmin Provider.
 9. User adds corrections, RPE, pain, and notes.
-10. AI returns:
+10. User manually enters AI post-workout analysis and initial-plan draft.
+11. TrainingOS groups same-day Garmin activities into one training day.
+12. TrainingOS creates a compact JSON packet.
+13. User sends the packet to ChatGPT.
+14. AI returns JSON only:
    - PR status;
    - estimated 1RM;
    - fatigue risk;
-   - next-day plan;
+   - data quality issues;
+   - initial next-day training draft;
+   - next-morning adjustment rules;
    - Increase / Keep / Reduce / Deload decisions.
-11. Save approved recommendation into Supabase.
-12. Update Google Calendar with completed summary and next target.
+15. User pastes the JSON into TrainingOS.
+16. Save approved analysis and initial draft into local SQLite `ai_reviews`.
+17. Next morning Garmin sleep and recovery metrics are imported.
+18. TrainingOS adjusts the draft after recovery sync.
+19. User approves the plan before Garmin push.
 ```
 
 ## Shortcut Roles
@@ -155,6 +177,11 @@ Action:
 - prepare prompt;
 - open ChatGPT App or call API.
 
+Important:
+
+- This review should analyze the completed session and create an initial next-day draft.
+- The draft should not become the final Garmin workout until next-day recovery metrics are imported and applied.
+
 ### Shortcut B: Tomorrow Training
 
 Trigger:
@@ -165,6 +192,7 @@ Trigger:
 
 Action:
 
+- import next-day Garmin sleep and recovery metrics;
 - read latest `ai_reviews`;
 - show today's target;
 - show TrainingOS-generated training rounds;
@@ -179,7 +207,7 @@ Trigger:
 Action:
 
 - open lightweight TrainingOS correction form;
-- update Supabase record;
+- update local SQLite record;
 - mark Garmin raw data as corrected.
 
 ## Product Decision
@@ -189,16 +217,17 @@ For V5, use:
 ```text
 Garmin built-in Strength activity
 + Garmin Provider import
-+ Supabase
++ Local SQLite
 + Shortcut-triggered ChatGPT review
 ```
 
 For V6, move the analysis from the ChatGPT app UI to a backend AI workflow:
 
 ```text
-Supabase
+Local SQLite
 + Cloud Function
 + OpenAI API
++ Monthly minimized Supabase sync
 + Calendar sync
 + Shortcut notification
 ```

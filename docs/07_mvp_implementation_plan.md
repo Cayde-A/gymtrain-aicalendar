@@ -17,11 +17,13 @@ The MVP should answer:
 Include:
 
 - TrainingOS V4 calendar template.
-- Mobile-friendly workout logging form or spreadsheet.
+- Local SQLite database prototype.
+- Mobile-friendly workout logging form.
 - PR and estimated 1RM calculation.
 - Garmin Provider MVP using reusable open-source tools.
 - Manual Garmin recovery fields as fallback.
 - AI review prompt format.
+- Monthly minimized sync package format.
 - Weekly review process.
 
 Exclude for first MVP:
@@ -29,6 +31,7 @@ Exclude for first MVP:
 - Native iOS app.
 - Background music-pause detection.
 - Production-grade Garmin API sync.
+- Direct raw Garmin cloud upload.
 - Full dashboard.
 - Nutrition automation.
 
@@ -37,7 +40,7 @@ Exclude for first MVP:
 1. Calendar reminds user of the planned session.
 2. User opens the workout template.
 3. User completes top set and back-off work.
-4. User logs sets, RPE, and notes.
+4. User logs sets, RPE, and notes into local SQLite.
 5. Garmin recovery context is imported through the provider MVP or entered manually if import fails.
 6. AI reviews the session.
 7. Next target is written back into the training record.
@@ -62,6 +65,7 @@ Minimum useful dataset:
 - PR calculation rules.
 - Weekly review checklist.
 - Garmin provider import notes.
+- Monthly minimized sync package.
 - Usage flow test checklist.
 
 See [Usage Flow Test v0.1](../artifacts/usage_flow_test_v0_1.md).
@@ -70,7 +74,7 @@ See [Usage Flow Test v0.1](../artifacts/usage_flow_test_v0_1.md).
 
 After MVP testing, decide:
 
-- whether to use Supabase immediately or start with spreadsheet storage;
+- whether monthly Supabase summary sync is useful after local SQLite works;
 - whether Google Calendar API sync is necessary;
 - whether Garmin sync should be official API, CSV import, or third-party bridge;
 - whether the first user interface should be web app, shortcut, or native app.
@@ -83,6 +87,6 @@ Use this sequence for the MVP:
 2. Pull one day of sleep, HRV, Body Battery, stress, and training readiness with `python-garminconnect`.
 3. Export recent activities with `garmin-connect-export` for cross-checking.
 4. Review GarminDB if local storage or historical import becomes complex.
-5. Normalize successful data into the TrainingOS schema.
+5. Normalize successful data into the TrainingOS local SQLite schema.
 
 If any source fails, follow the failure and same-source recheck protocol in [Garmin Provider Strategy](08_garmin_provider_strategy.md).

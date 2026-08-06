@@ -10,7 +10,7 @@ Use a staged approach:
 
 ```text
 Stage 1: local scheduled import
-Stage 2: Supabase-backed import pipeline
+Stage 2: monthly minimized Supabase sync
 Stage 3: official Garmin API or stable production provider
 ```
 
@@ -22,7 +22,8 @@ This is the recommended first implementation.
 Mac local scheduler
 -> Garmin export/import script
 -> normalized JSON
--> Supabase
+-> Local SQLite
+-> temporary raw cache
 ```
 
 Why:
@@ -123,7 +124,7 @@ Minimum activity record:
 }
 ```
 
-### 5. Load into Supabase
+### 5. Load into Local SQLite
 
 Insert or upsert by stable keys:
 
@@ -135,7 +136,40 @@ garmin_activities:
 provider + external_activity_id
 ```
 
-### 6. Schedule
+### 6. Monthly minimized sync
+
+Once per month, generate a minimized summary from local SQLite and upload only the approved summary fields to Supabase.
+
+Default upload:
+
+- training days;
+- session count by type;
+- exercise-level volume summary;
+- best sets and PR count;
+- estimated 1RM trends;
+- recovery averages;
+- approved AI monthly summary;
+- next-month focus.
+
+Default exclusions:
+
+- raw Garmin JSON;
+- Garmin tokens;
+- Garmin user ID;
+- device identifiers;
+- GPS routes;
+- minute-level heart-rate series;
+- private notes.
+
+After successful upload:
+
+```text
+Delete temporary sync package
+Delete raw Garmin cache older than retention window
+Keep local SQLite history
+```
+
+### 7. Schedule
 
 Recommended MVP schedule:
 
@@ -143,23 +177,26 @@ Recommended MVP schedule:
 Daily import: 06:30
 Post-workout import: manual Shortcut or button
 Evening review: 21:00
+Monthly minimized sync: first day of month
 ```
 
-## Stage 2: Supabase-Backed Pipeline
+## Stage 2: Monthly Minimized Supabase Sync
 
 Once Stage 1 works, move the pipeline toward:
 
 ```text
 Scheduled job
 -> Garmin Provider
--> Supabase
+-> Local SQLite
 -> AI review trigger
--> Google Calendar update
+-> Monthly minimized summary
+-> Supabase
+-> Google Calendar update if approved
 ```
 
 Options:
 
-- local Mac scheduler continues to push into Supabase;
+- local Mac scheduler continues to write into SQLite and push only monthly summaries into Supabase;
 - GitHub Actions scheduled job, if Garmin authentication is stable;
 - small private server or cloud worker;
 - Supabase Edge Function only if the Garmin provider can run reliably there.
@@ -174,7 +211,8 @@ Official path:
 Garmin user consent
 -> Garmin API push/pull
 -> TrainingOS webhook/API
--> Supabase
+-> Local SQLite
+-> minimized Supabase summaries
 ```
 
 Use official API when:
@@ -228,6 +266,110 @@ Garmin raw activity
 -> clean TrainingOS workout record
 ```
 
+## Completed Activity Import MVP
+
+The local completed activity importer is:
+
+```text
+scripts/garmin_activity_import.py
+```
+
+It uses Garmin activity APIs in this order:
+
+```text
+get_activities_by_date
+-> get_activity / get_activity_details
+-> get_activity_exercise_sets
+-> normalize completed session
+-> write completed_sessions and set_logs to local SQLite
+```
+
+Recommended command:
+
+```bash
+python3 scripts/garmin_activity_import.py --days 7 --limit 5
+```
+
+Use `--strength-only` when the recent activity list includes multiple sport types and only strength sessions should be imported.
+
+By default, raw Garmin payloads are not saved. Use `--include-raw` only for local debugging, and never commit those files.
+
+## Correction UI MVP
+
+The local correction interface is:
+
+```text
+scripts/local_review_ui.py
+```
+
+Recommended command:
+
+```bash
+python3 scripts/local_review_ui.py
+```
+
+Open:
+
+```text
+http://127.0.0.1:8787
+```
+
+The correction page supports:
+
+- exercise name correction;
+- set order correction;
+- set type correction;
+- weight correction;
+- rep correction;
+- RPE entry;
+- pain and technique notes;
+- readiness notes;
+- AI review summary generation.
+
+## Manual Post-Workout AI Analysis
+
+After correction, the user can choose:
+
+```text
+Save correction
+or
+Save and enter AI analysis + initial next-day draft
+```
+
+The AI analysis step should review the completed workout and generate an initial next-day training draft.
+
+It should not finalize the next-day training plan yet. The initial draft should be adjusted the next morning after Garmin sleep, HRV, Body Battery, readiness, and recovery metrics have synced into TrainingOS.
+
+To reduce compute, TrainingOS should not send full history or long chat context.
+
+MVP flow:
+
+```text
+build_ai_review_packet()
+-> compact JSON packet
+-> ChatGPT JSON response
+-> paste response into TrainingOS
+-> save_ai_review_response()
+-> ai_reviews
+```
+
+For AI review, same-day Garmin activities should be grouped as one training day:
+
+```text
+completed_sessions where date(completed_at) = training_date
+-> day-level compact packet
+-> one AI review for the training day
+```
+
+The AI response should be JSON only and include:
+
+- `analysis_summary`;
+- `performance_direction`;
+- `risk_flags`;
+- `data_quality_issues`;
+- `initial_next_day_plan`;
+- `next_morning_adjustment_rules`.
+
 ## Security Rules
 
 - Never commit `.env`.
@@ -236,6 +378,8 @@ Garmin raw activity
 - Never commit raw Garmin health export.
 - Use `.gitignore` for exports and tokens.
 - Keep only normalized test/sample data in GitHub.
+- Keep local SQLite out of Git.
+- Upload monthly minimized summaries to Supabase by default, not raw provider payloads.
 
 ## MVP Acceptance Criteria
 
@@ -248,4 +392,3 @@ The Garmin auto import MVP is successful when:
 - duplicate imports do not create duplicate records;
 - AI review can use the imported recovery and activity data;
 - no private data is committed to GitHub.
-
