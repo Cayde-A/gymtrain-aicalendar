@@ -86,6 +86,226 @@ class TrainingOSDbTestCase(unittest.TestCase):
             self.assertEqual(session["overall_rpe"], 8.5)
             self.assertEqual(session["sets"][0]["exercise_name"], "Leg Press")
 
+    def test_save_imported_workout_creates_pr_state_and_records(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "trainingos.sqlite"
+            trainingos_db.init_db(db_path)
+            with trainingos_db.connect(db_path) as connection:
+                session_id = trainingos_db.save_imported_workout(
+                    connection,
+                    {
+                        "provider": "garmin",
+                        "external_activity_id": "pr-first",
+                        "completed_at": "2026-08-02 09:00:00",
+                        "session_type": "strength_training",
+                        "sets": [
+                            {
+                                "exercise_name": "Bench Press",
+                                "set_order": 1,
+                                "set_type": "working",
+                                "weight_kg": 100,
+                                "reps": 5,
+                            }
+                        ],
+                    },
+                )
+                records = trainingos_db.get_pr_records_for_session(connection, session_id)
+                states = connection.execute(
+                    """
+                    select exercise_pr_state.*, exercise_catalog.name as exercise_name
+                    from exercise_pr_state
+                    join exercise_catalog on exercise_catalog.id = exercise_pr_state.exercise_id
+                    where exercise_catalog.name = 'Bench Press'
+                    """
+                ).fetchall()
+        pr_types = {record["pr_type"] for record in records}
+        self.assertEqual(pr_types, {"1rm", "3rm", "5rm", "estimated_1rm", "volume_pr"})
+        self.assertEqual(len(states), 5)
+
+    def test_pr_state_only_updates_when_candidate_is_greater(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "trainingos.sqlite"
+            trainingos_db.init_db(db_path)
+            with trainingos_db.connect(db_path) as connection:
+                first_session_id = trainingos_db.save_imported_workout(
+                    connection,
+                    {
+                        "provider": "garmin",
+                        "external_activity_id": "pr-high",
+                        "completed_at": "2026-08-02 09:00:00",
+                        "session_type": "strength_training",
+                        "sets": [
+                            {
+                                "exercise_name": "Bench Press",
+                                "set_order": 1,
+                                "set_type": "working",
+                                "weight_kg": 100,
+                                "reps": 5,
+                            }
+                        ],
+                    },
+                )
+                second_session_id = trainingos_db.save_imported_workout(
+                    connection,
+                    {
+                        "provider": "garmin",
+                        "external_activity_id": "pr-lower",
+                        "completed_at": "2026-08-03 09:00:00",
+                        "session_type": "strength_training",
+                        "sets": [
+                            {
+                                "exercise_name": "Bench Press",
+                                "set_order": 1,
+                                "set_type": "working",
+                                "weight_kg": 95,
+                                "reps": 5,
+                            }
+                        ],
+                    },
+                )
+                lower_records = trainingos_db.get_pr_records_for_session(connection, second_session_id)
+                state = connection.execute(
+                    """
+                    select exercise_pr_state.*
+                    from exercise_pr_state
+                    join exercise_catalog on exercise_catalog.id = exercise_pr_state.exercise_id
+                    where exercise_catalog.name = 'Bench Press'
+                      and exercise_pr_state.pr_type = '5rm'
+                    """
+                ).fetchone()
+        self.assertTrue(first_session_id.startswith("session_"))
+        self.assertEqual(lower_records, [])
+        self.assertEqual(state["weight_kg"], 100)
+
+    def test_pr_state_rebuilds_after_correcting_a_false_pr_down(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "trainingos.sqlite"
+            trainingos_db.init_db(db_path)
+            with trainingos_db.connect(db_path) as connection:
+                trainingos_db.save_imported_workout(
+                    connection,
+                    {
+                        "provider": "garmin",
+                        "external_activity_id": "pr-baseline",
+                        "completed_at": "2026-08-01 09:00:00",
+                        "session_type": "strength_training",
+                        "sets": [
+                            {
+                                "exercise_name": "Bench Press",
+                                "set_order": 1,
+                                "set_type": "working",
+                                "weight_kg": 100,
+                                "reps": 5,
+                            }
+                        ],
+                    },
+                )
+                false_pr_session_id = trainingos_db.save_imported_workout(
+                    connection,
+                    {
+                        "provider": "garmin",
+                        "external_activity_id": "pr-false",
+                        "completed_at": "2026-08-02 09:00:00",
+                        "session_type": "strength_training",
+                        "sets": [
+                            {
+                                "exercise_name": "Bench Press",
+                                "set_order": 1,
+                                "set_type": "working",
+                                "weight_kg": 120,
+                                "reps": 5,
+                            }
+                        ],
+                    },
+                )
+                trainingos_db.update_review_payload(
+                    connection,
+                    false_pr_session_id,
+                    {
+                        "overall_rpe": None,
+                        "fatigue_rating": None,
+                        "pain_notes": None,
+                        "readiness_notes": None,
+                        "sets": [
+                            {
+                                "exercise_name": "Bench Press",
+                                "set_order": 1,
+                                "set_type": "working",
+                                "weight_kg": 90,
+                                "reps": 5,
+                            }
+                        ],
+                    },
+                )
+                corrected_records = trainingos_db.get_pr_records_for_session(connection, false_pr_session_id)
+                state = connection.execute(
+                    """
+                    select exercise_pr_state.*
+                    from exercise_pr_state
+                    join exercise_catalog on exercise_catalog.id = exercise_pr_state.exercise_id
+                    where exercise_catalog.name = 'Bench Press'
+                      and exercise_pr_state.pr_type = '5rm'
+                    """
+                ).fetchone()
+        self.assertEqual(corrected_records, [])
+        self.assertEqual(state["weight_kg"], 100)
+
+    def test_rebuild_all_prs_recreates_state_from_history(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "trainingos.sqlite"
+            trainingos_db.init_db(db_path)
+            with trainingos_db.connect(db_path) as connection:
+                trainingos_db.save_imported_workout(
+                    connection,
+                    {
+                        "provider": "garmin",
+                        "external_activity_id": "rebuild-low",
+                        "completed_at": "2026-08-01 09:00:00",
+                        "session_type": "strength_training",
+                        "sets": [
+                            {
+                                "exercise_name": "Row",
+                                "set_order": 1,
+                                "set_type": "working",
+                                "weight_kg": 80,
+                                "reps": 8,
+                            }
+                        ],
+                    },
+                )
+                trainingos_db.save_imported_workout(
+                    connection,
+                    {
+                        "provider": "garmin",
+                        "external_activity_id": "rebuild-high",
+                        "completed_at": "2026-08-02 09:00:00",
+                        "session_type": "strength_training",
+                        "sets": [
+                            {
+                                "exercise_name": "Row",
+                                "set_order": 1,
+                                "set_type": "working",
+                                "weight_kg": 85,
+                                "reps": 8,
+                            }
+                        ],
+                    },
+                )
+                connection.execute("delete from exercise_pr_state")
+                connection.execute("delete from pr_records")
+                result = trainingos_db.rebuild_all_prs(connection)
+                state = connection.execute(
+                    """
+                    select exercise_pr_state.*
+                    from exercise_pr_state
+                    join exercise_catalog on exercise_catalog.id = exercise_pr_state.exercise_id
+                    where exercise_catalog.name = 'Row'
+                      and exercise_pr_state.pr_type = '8rm'
+                    """
+                ).fetchone()
+        self.assertEqual(result["session_count"], 2)
+        self.assertEqual(state["weight_kg"], 85)
+
     def test_build_post_workout_analysis_prompt_includes_initial_plan_and_recovery_adjustment(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "trainingos.sqlite"

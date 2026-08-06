@@ -8,7 +8,6 @@ import json
 import sqlite3
 import sys
 import uuid
-from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +50,13 @@ AI_CALL_TRIGGER_NAMES = {"post_workout_ai", "next_morning_adjustment"}
 MANUAL_ONLY_MODES = {"manual_copy_paste", "manual_only"}
 USER_CONFIRMED_MODES = {"user_confirmed_api", "user_confirmed"}
 AUTO_MODES = {"auto_api_after_correction", "auto_api_after_recovery_sync", "auto_after_final_plan"}
+REP_MAX_PR_TYPES = {
+    "1rm": 1,
+    "3rm": 3,
+    "5rm": 5,
+    "8rm": 8,
+}
+DERIVED_PR_TYPES = {"estimated_1rm", "volume_pr"}
 
 try:
     from . import trainingos_observability
@@ -207,7 +213,11 @@ def count_ai_calls_for_date(
     call_date: str | None = None,
     athlete_id: str = DEFAULT_ATHLETE_ID,
 ) -> int:
-    target_date = call_date or date.today().isoformat()
+    if call_date is None:
+        row = connection.execute("select substr(current_timestamp, 1, 10) as current_date").fetchone()
+        target_date = str(row["current_date"])
+    else:
+        target_date = call_date
     row = connection.execute(
         """
         select count(*) as call_count
@@ -468,6 +478,325 @@ def replace_set_logs(
         )
 
 
+def get_session_exercise_ids(connection: sqlite3.Connection, session_id: str) -> set[str]:
+    rows = connection.execute(
+        """
+        select distinct exercise_id
+        from set_logs
+        where completed_session_id = ?
+        """,
+        (session_id,),
+    ).fetchall()
+    return {str(row["exercise_id"]) for row in rows}
+
+
+def pr_record_best_value(record: dict[str, Any]) -> float | None:
+    pr_type = str(record.get("pr_type") or "")
+    weight = record.get("weight_kg")
+    reps = record.get("reps")
+    estimated_1rm = record.get("estimated_1rm_kg")
+    if weight is None:
+        return None
+    if pr_type in REP_MAX_PR_TYPES:
+        return float(weight)
+    if pr_type == "estimated_1rm":
+        return float(estimated_1rm) if estimated_1rm is not None else None
+    if pr_type == "volume_pr" and reps is not None:
+        return float(weight) * int(reps)
+    return None
+
+
+def build_pr_candidates_for_session(
+    connection: sqlite3.Connection,
+    session_id: str,
+) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        """
+        select
+          set_logs.*,
+          completed_sessions.athlete_id,
+          completed_sessions.completed_at
+        from set_logs
+        join completed_sessions on completed_sessions.id = set_logs.completed_session_id
+        where set_logs.completed_session_id = ?
+          and set_logs.weight_kg is not null
+          and set_logs.reps is not null
+          and lower(coalesce(set_logs.set_type, '')) != 'rest'
+          and set_logs.weight_kg > 0
+          and set_logs.reps > 0
+        order by set_logs.set_order
+        """,
+        (session_id,),
+    ).fetchall()
+    candidates: list[dict[str, Any]] = []
+    for row in rows:
+        set_log = dict(row)
+        weight = float(set_log["weight_kg"])
+        reps = int(set_log["reps"])
+        estimated_1rm = set_log.get("estimated_1rm_kg")
+        base = {
+            "athlete_id": set_log["athlete_id"],
+            "exercise_id": set_log["exercise_id"],
+            "completed_session_id": session_id,
+            "set_log_id": set_log["id"],
+            "weight_kg": weight,
+            "reps": reps,
+            "estimated_1rm_kg": estimated_1rm,
+            "achieved_at": set_log["completed_at"],
+        }
+        for pr_type, rep_threshold in REP_MAX_PR_TYPES.items():
+            if reps >= rep_threshold:
+                candidates.append({**base, "pr_type": pr_type, "best_value": weight})
+        if estimated_1rm is not None:
+            candidates.append({**base, "pr_type": "estimated_1rm", "best_value": float(estimated_1rm)})
+        candidates.append({**base, "pr_type": "volume_pr", "best_value": weight * reps})
+    best_candidates: dict[tuple[str, str], dict[str, Any]] = {}
+    for candidate in candidates:
+        key = (str(candidate["exercise_id"]), str(candidate["pr_type"]))
+        existing = best_candidates.get(key)
+        if existing is None or float(candidate["best_value"]) > float(existing["best_value"]):
+            best_candidates[key] = candidate
+    return list(best_candidates.values())
+
+
+def upsert_exercise_pr_state(connection: sqlite3.Connection, candidate: dict[str, Any]) -> None:
+    connection.execute(
+        """
+        insert into exercise_pr_state (
+          id, athlete_id, exercise_id, pr_type, best_value, weight_kg, reps,
+          estimated_1rm_kg, source_session_id, source_set_log_id, achieved_at
+        )
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        on conflict(athlete_id, exercise_id, pr_type) do update set
+          best_value = excluded.best_value,
+          weight_kg = excluded.weight_kg,
+          reps = excluded.reps,
+          estimated_1rm_kg = excluded.estimated_1rm_kg,
+          source_session_id = excluded.source_session_id,
+          source_set_log_id = excluded.source_set_log_id,
+          achieved_at = excluded.achieved_at,
+          updated_at = current_timestamp
+        """,
+        (
+            new_id("pr_state"),
+            candidate["athlete_id"],
+            candidate["exercise_id"],
+            candidate["pr_type"],
+            candidate["best_value"],
+            candidate["weight_kg"],
+            candidate["reps"],
+            candidate.get("estimated_1rm_kg"),
+            candidate["completed_session_id"],
+            candidate["set_log_id"],
+            candidate["achieved_at"],
+        ),
+    )
+
+
+def insert_pr_record(connection: sqlite3.Connection, candidate: dict[str, Any]) -> str:
+    pr_record_id = new_id("pr")
+    connection.execute(
+        """
+        insert into pr_records (
+          id, athlete_id, exercise_id, completed_session_id, set_log_id,
+          pr_type, weight_kg, reps, estimated_1rm_kg, achieved_at
+        )
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            pr_record_id,
+            candidate["athlete_id"],
+            candidate["exercise_id"],
+            candidate["completed_session_id"],
+            candidate["set_log_id"],
+            candidate["pr_type"],
+            candidate["weight_kg"],
+            candidate["reps"],
+            candidate.get("estimated_1rm_kg"),
+            candidate["achieved_at"],
+        ),
+    )
+    return pr_record_id
+
+
+def rebuild_pr_state_for_exercises(
+    connection: sqlite3.Connection,
+    exercise_ids: set[str],
+    athlete_id: str = DEFAULT_ATHLETE_ID,
+) -> None:
+    if not exercise_ids:
+        return
+    placeholders = ",".join("?" for _ in exercise_ids)
+    params = [athlete_id, *sorted(exercise_ids)]
+    connection.execute(
+        f"""
+        delete from exercise_pr_state
+        where athlete_id = ?
+          and exercise_id in ({placeholders})
+        """,
+        params,
+    )
+    rows = connection.execute(
+        f"""
+        select *
+        from pr_records
+        where athlete_id = ?
+          and exercise_id in ({placeholders})
+        order by achieved_at, created_at
+        """,
+        params,
+    ).fetchall()
+    best_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        record = dict(row)
+        best_value = pr_record_best_value(record)
+        if best_value is None:
+            continue
+        key = (str(record["exercise_id"]), str(record["pr_type"]))
+        existing = best_by_key.get(key)
+        if existing is None or best_value > float(existing["best_value"]):
+            best_by_key[key] = {
+                "athlete_id": record["athlete_id"],
+                "exercise_id": record["exercise_id"],
+                "completed_session_id": record["completed_session_id"],
+                "set_log_id": record["set_log_id"],
+                "pr_type": record["pr_type"],
+                "best_value": best_value,
+                "weight_kg": record["weight_kg"],
+                "reps": record["reps"],
+                "estimated_1rm_kg": record["estimated_1rm_kg"],
+                "achieved_at": record["achieved_at"],
+            }
+    for candidate in best_by_key.values():
+        upsert_exercise_pr_state(connection, candidate)
+
+
+def current_pr_state_map(
+    connection: sqlite3.Connection,
+    exercise_ids: set[str],
+    athlete_id: str = DEFAULT_ATHLETE_ID,
+) -> dict[tuple[str, str], dict[str, Any]]:
+    if not exercise_ids:
+        return {}
+    placeholders = ",".join("?" for _ in exercise_ids)
+    rows = connection.execute(
+        f"""
+        select *
+        from exercise_pr_state
+        where athlete_id = ?
+          and exercise_id in ({placeholders})
+        """,
+        [athlete_id, *sorted(exercise_ids)],
+    ).fetchall()
+    return {(str(row["exercise_id"]), str(row["pr_type"])): dict(row) for row in rows}
+
+
+def process_session_prs(
+    connection: sqlite3.Connection,
+    session_id: str,
+    affected_exercise_ids: set[str] | None = None,
+    athlete_id: str = DEFAULT_ATHLETE_ID,
+) -> list[dict[str, Any]]:
+    current_exercise_ids = get_session_exercise_ids(connection, session_id)
+    exercise_ids = set(affected_exercise_ids or set()) | current_exercise_ids
+    connection.execute("delete from pr_records where completed_session_id = ?", (session_id,))
+    rebuild_pr_state_for_exercises(connection, exercise_ids, athlete_id)
+    state = current_pr_state_map(connection, current_exercise_ids, athlete_id)
+    new_prs = []
+    for candidate in build_pr_candidates_for_session(connection, session_id):
+        key = (str(candidate["exercise_id"]), str(candidate["pr_type"]))
+        existing = state.get(key)
+        if existing is not None and float(candidate["best_value"]) <= float(existing["best_value"]):
+            continue
+        pr_record_id = insert_pr_record(connection, candidate)
+        upsert_exercise_pr_state(connection, candidate)
+        candidate_result = dict(candidate)
+        candidate_result["pr_record_id"] = pr_record_id
+        new_prs.append(candidate_result)
+        state[key] = {"best_value": candidate["best_value"]}
+    trainingos_observability.record_event(
+        "session_prs_processed",
+        details={
+            "session_id": session_id,
+            "candidate_count": len(build_pr_candidates_for_session(connection, session_id)),
+            "new_pr_count": len(new_prs),
+        },
+    )
+    return new_prs
+
+
+def rebuild_all_prs(
+    connection: sqlite3.Connection,
+    athlete_id: str = DEFAULT_ATHLETE_ID,
+) -> dict[str, Any]:
+    connection.execute("delete from exercise_pr_state where athlete_id = ?", (athlete_id,))
+    connection.execute("delete from pr_records where athlete_id = ?", (athlete_id,))
+    rows = connection.execute(
+        """
+        select id
+        from completed_sessions
+        where athlete_id = ?
+        order by completed_at, created_at
+        """,
+        (athlete_id,),
+    ).fetchall()
+    session_count = 0
+    pr_count = 0
+    for row in rows:
+        session_count += 1
+        pr_count += len(process_session_prs(connection, str(row["id"]), athlete_id=athlete_id))
+    result = {"session_count": session_count, "pr_count": pr_count}
+    trainingos_observability.record_event("all_prs_rebuilt", details=result)
+    return result
+
+
+def clear_prs_for_session(connection: sqlite3.Connection, session_id: str) -> None:
+    connection.execute("delete from exercise_pr_state where source_session_id = ?", (session_id,))
+    connection.execute("delete from pr_records where completed_session_id = ?", (session_id,))
+
+
+def get_pr_records_for_session(connection: sqlite3.Connection, session_id: str) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        """
+        select
+          pr_records.*,
+          exercise_catalog.name as exercise_name
+        from pr_records
+        join exercise_catalog on exercise_catalog.id = pr_records.exercise_id
+        where completed_session_id = ?
+        order by achieved_at desc, created_at desc
+        """,
+        (session_id,),
+    ).fetchall()
+    results = []
+    for row in rows:
+        record = dict(row)
+        record["best_value"] = pr_record_best_value(record)
+        results.append(record)
+    return results
+
+
+def get_current_pr_state_for_exercise(
+    connection: sqlite3.Connection,
+    exercise_id: str,
+    athlete_id: str = DEFAULT_ATHLETE_ID,
+) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        """
+        select
+          exercise_pr_state.*,
+          exercise_catalog.name as exercise_name
+        from exercise_pr_state
+        join exercise_catalog on exercise_catalog.id = exercise_pr_state.exercise_id
+        where athlete_id = ?
+          and exercise_id = ?
+        order by pr_type
+        """,
+        (athlete_id, exercise_id),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def save_imported_workout(
     connection: sqlite3.Connection,
     workout: dict[str, Any],
@@ -475,7 +804,10 @@ def save_imported_workout(
 ) -> str:
     ensure_default_athlete(connection)
     session_id = upsert_completed_session(connection, workout, athlete_id)
+    old_exercise_ids = get_session_exercise_ids(connection, session_id)
+    clear_prs_for_session(connection, session_id)
     replace_set_logs(connection, session_id, workout.get("sets", []))
+    new_prs = process_session_prs(connection, session_id, old_exercise_ids, athlete_id)
     trainingos_observability.record_event(
         "workout_saved",
         details={
@@ -484,6 +816,7 @@ def save_imported_workout(
             "external_activity_id": workout.get("external_activity_id"),
             "activity_name": workout.get("activity_name"),
             "set_count": len(workout.get("sets", [])),
+            "new_pr_count": len(new_prs),
         },
     )
     return session_id
@@ -562,6 +895,7 @@ def get_session_for_review(connection: sqlite3.Connection, session_id: str) -> d
     ).fetchall()
     result = dict(session)
     result["sets"] = [dict(row) for row in sets]
+    result["pr_records"] = get_pr_records_for_session(connection, session_id)
     return result
 
 
@@ -570,6 +904,8 @@ def update_review_payload(
     session_id: str,
     payload: dict[str, Any],
 ) -> None:
+    old_exercise_ids = get_session_exercise_ids(connection, session_id)
+    clear_prs_for_session(connection, session_id)
     connection.execute(
         """
         update completed_sessions
@@ -588,6 +924,7 @@ def update_review_payload(
         ),
     )
     replace_set_logs(connection, session_id, payload.get("sets", []))
+    new_prs = process_session_prs(connection, session_id, old_exercise_ids)
     trainingos_observability.record_event(
         "review_saved",
         details={
@@ -595,6 +932,7 @@ def update_review_payload(
             "set_count": len(payload.get("sets", [])),
             "has_pain_notes": bool(payload.get("pain_notes")),
             "has_readiness_notes": bool(payload.get("readiness_notes")),
+            "new_pr_count": len(new_prs),
         },
     )
 
@@ -1026,6 +1364,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--db", default=str(DEFAULT_DB_PATH), help="SQLite database path.")
     parser.add_argument("--init", action="store_true", help="Initialize the local database.")
     parser.add_argument("--list-sessions", action="store_true", help="List recent completed sessions.")
+    parser.add_argument("--rebuild-prs", action="store_true", help="Rebuild PR records and current PR state.")
     return parser.parse_args()
 
 
@@ -1038,7 +1377,10 @@ def main() -> int:
     if args.list_sessions:
         with connect(db_path) as connection:
             print(json.dumps(get_recent_sessions(connection), indent=2, ensure_ascii=False))
-    if not args.init and not args.list_sessions:
+    if args.rebuild_prs:
+        with connect(db_path) as connection:
+            print(json.dumps(rebuild_all_prs(connection), indent=2, ensure_ascii=False))
+    if not args.init and not args.list_sessions and not args.rebuild_prs:
         print("No action selected. Use --init or --list-sessions.")
     return 0
 

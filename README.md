@@ -31,6 +31,7 @@ The project starts from TrainingOS V4: a PR-centered training methodology with G
 - [Preset Training Rounds](docs/13_preset_training_rounds.md)
 - [Local-First Monthly Sync Strategy](docs/14_local_first_monthly_sync.md)
 - [AI Trigger Policy](docs/15_ai_trigger_policy.md)
+- [PR Tracking Design](docs/16_pr_tracking_design.md)
 - [Local SQLite Schema](schema/local_sqlite.sql)
 - [Backlog](BACKLOG.md)
 - [Artifacts](artifacts/README.md)
@@ -133,6 +134,16 @@ TrainingOS groups same-day Garmin activities into one training day
 -> ChatGPT returns JSON only
 -> user pastes JSON back into TrainingOS
 -> TrainingOS saves it to ai_reviews
+```
+
+PR tracking is automatic after import or correction:
+
+```text
+Session sets
+-> build PR candidates per exercise
+-> compare with exercise_pr_state
+-> update only when the candidate is greater
+-> append pr_records only for real improvements
 ```
 
 API calls are controlled by a local trigger policy. Open:

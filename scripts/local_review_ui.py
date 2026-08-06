@@ -172,11 +172,30 @@ class ReviewServer:
                   <td data-label="备注"><input name="notes_{index}" value="{safe(set_log.get("notes"))}"></td>
                 </tr>"""
             )
+        pr_rows = []
+        for pr_record in session.get("pr_records", []):
+            pr_rows.append(
+                f"""<tr>
+                  <td>{safe(pr_record.get("exercise_name"))}</td>
+                  <td>{safe(pr_record.get("pr_type"))}</td>
+                  <td>{numeric(pr_record.get("best_value"))}</td>
+                  <td>{numeric(pr_record.get("weight_kg"))}</td>
+                  <td>{numeric(pr_record.get("reps"))}</td>
+                </tr>"""
+            )
+        pr_block = "<div class='empty'>本次没有新 PR。</div>"
+        if pr_rows:
+            pr_block = f"""<table>
+              <thead><tr><th>动作</th><th>PR 类型</th><th>PR 数值</th><th>重量 kg</th><th>次数</th></tr></thead>
+              <tbody>{''.join(pr_rows)}</tbody>
+            </table>"""
         saved_notice = "<p class='muted'>已保存校正。</p>" if saved else ""
         body = f"""{nav()}
         <p><a href="/">返回列表</a></p>
         <h1>{safe(session.get("activity_name") or "Completed Workout")}</h1>
         {saved_notice}
+        <h2>本次 PR</h2>
+        {pr_block}
         <form method="post" action="/save">
           <input type="hidden" name="session_id" value="{safe(session_id)}">
           <input type="hidden" name="set_count" value="{len(sets)}">

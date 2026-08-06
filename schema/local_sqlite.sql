@@ -116,6 +116,22 @@ create table if not exists pr_records (
   created_at text not null default current_timestamp
 );
 
+create table if not exists exercise_pr_state (
+  id text primary key,
+  athlete_id text not null references athletes(id),
+  exercise_id text not null references exercise_catalog(id),
+  pr_type text not null,
+  best_value real not null,
+  weight_kg real not null,
+  reps integer,
+  estimated_1rm_kg real,
+  source_session_id text references completed_sessions(id),
+  source_set_log_id text references set_logs(id),
+  achieved_at text not null,
+  updated_at text not null default current_timestamp,
+  unique (athlete_id, exercise_id, pr_type)
+);
+
 create table if not exists daily_recovery_metrics (
   id text primary key,
   athlete_id text not null references athletes(id),
@@ -260,6 +276,12 @@ create index if not exists idx_completed_sessions_athlete_completed
 
 create index if not exists idx_set_logs_session_order
   on set_logs (completed_session_id, set_order);
+
+create index if not exists idx_pr_records_exercise_type
+  on pr_records (athlete_id, exercise_id, pr_type);
+
+create index if not exists idx_exercise_pr_state_exercise
+  on exercise_pr_state (athlete_id, exercise_id);
 
 create index if not exists idx_daily_recovery_athlete_date
   on daily_recovery_metrics (athlete_id, metric_date);
