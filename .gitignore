@@ -7,6 +7,10 @@ __pycache__/
 .venv/
 .venv-garmin/
 node_modules/
+.build/
+.swiftpm/
+DerivedData/
+apps/ios/TrainingOS.xcodeproj/
 dist/
 build/
 .vercel/

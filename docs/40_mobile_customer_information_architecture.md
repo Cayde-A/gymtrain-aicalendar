@@ -2,6 +2,10 @@
 
 ## Product Constraint
 
+The first native implementation targets iOS 17+ with SwiftUI. The information
+architecture remains platform-neutral so Android can follow without changing
+the customer workflow.
+
 The customer app has exactly four primary destinations in a persistent bottom
 tab bar:
 
@@ -128,7 +132,7 @@ they are not linked or shipped in the customer navigation.
 
 ## Initial Mobile Delivery Order
 
-1. Four-tab app shell, local database, Today, and Training correction flow.
+1. iOS SwiftUI four-tab app shell, local database, Today, and Training correction flow.
 2. Nutrition manual entry, water logging, local notifications, and 16:8 window.
 3. Barcode/search nutrition sources and editable food-photo recognition.
 4. Progress trends, account/device settings, privacy lifecycle, and optional cloud sync.

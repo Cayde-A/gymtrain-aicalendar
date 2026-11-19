@@ -54,6 +54,7 @@ The project starts from TrainingOS V4: a PR-centered training methodology with G
 - [Supabase Monthly Upload](docs/38_supabase_monthly_upload.md)
 - [Garmin Personal API Migration](docs/39_garmin_personal_api_migration.md)
 - [Mobile Customer Information Architecture](docs/40_mobile_customer_information_architecture.md)
+- [iOS Application](apps/ios/README.md)
 - [Garmin Provider Failure Recheck](docs/24_garmin_provider_recheck.md)
 - [Historical garmin-data-export Import](docs/25_historical_garmin_data_export_import.md)
 - [Local SQLite Schema](schema/local_sqlite.sql)
@@ -81,6 +82,12 @@ The native customer app is constrained to four primary destinations: Today,
 Training, Nutrition, and Progress. Settings remain inside Progress; developer
 diagnostics and credentials are excluded from customer builds. See
 [Mobile Customer Information Architecture](docs/40_mobile_customer_information_architecture.md).
+
+iOS 17+ with SwiftUI is the first native delivery target. The repository now
+contains a reproducible XcodeGen manifest, a four-tab customer shell, bilingual
+resources, service boundaries, and a testable `TrainingOSCore` Swift package.
+Full simulator and device validation requires the complete Xcode application;
+Command Line Tools alone are insufficient. See [iOS Application](apps/ios/README.md).
 
 ## MVP Garmin Usage Flow
 

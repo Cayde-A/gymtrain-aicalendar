@@ -1,0 +1,37 @@
+name: TrainingOS
+options:
+  bundleIdPrefix: com.trainingos
+  deploymentTarget:
+    iOS: "17.0"
+packages:
+  TrainingOSCore:
+    path: TrainingOSCore
+targets:
+  TrainingOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: TrainingOSApp
+        excludes:
+          - Info.plist
+          - Resources
+    resources:
+      - path: TrainingOSApp/Resources
+    info:
+      path: TrainingOSApp/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.trainingos.mobile
+        PRODUCT_NAME: TrainingOS
+        SWIFT_VERSION: 6.0
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
+    dependencies:
+      - package: TrainingOSCore
+schemes:
+  TrainingOS:
+    build:
+      targets:
+        TrainingOS: all
+    run:
+      config: Debug

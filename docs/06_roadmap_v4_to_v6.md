@@ -50,6 +50,9 @@ Exit criteria:
 
 Goal: add cloud capabilities without making raw personal data the default cloud record.
 
+Initial native target: iOS 17+ using SwiftUI. Android follows only after the
+four-page customer workflow and local-first data contracts are validated on iOS.
+
 Milestones:
 
 - V6.0: Supabase monthly summary schema and authentication.

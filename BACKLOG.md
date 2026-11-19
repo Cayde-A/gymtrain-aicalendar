@@ -2,12 +2,19 @@
 
 ## Now
 
+- Install/select the full Xcode application, generate the iOS project from
+  `apps/ios/project.yml`, and complete the first simulator build.
+- Connect the SwiftUI shell to local persistence and the normalized TrainingOS
+  training/recovery contracts before enabling customer-facing live actions.
 - Configure the first external AI provider and verify an actual review response through the local trigger policy.
 - Configure Google Calendar OAuth and verify one idempotent calendar write.
 - Configure a Supabase project and verify one confirmed monthly package upload and cleanup.
 
 ## Recently Completed
 
+- Established iOS 17+ and SwiftUI as the first native target, with a four-tab
+  customer shell, bilingual resources, service boundaries, and a pure Swift
+  `TrainingOSCore` package for domain rules.
 - Added a first-training waiting state so new or interrupted users can continue
   recovery sync without triggering parsing, AI analysis, planning, or Garmin
   push before a usable completed-workout anchor exists.

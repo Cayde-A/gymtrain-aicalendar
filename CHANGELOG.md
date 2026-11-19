@@ -23,6 +23,8 @@
 - Added explicit Dashboard and pipeline states for no training history and imported activities that contain no active sets.
 - Added Dashboard locale negotiation from the browser/system `Accept-Language`, with complete Chinese and English labels, charts, empty states, onboarding notices, and Garmin sync feedback.
 - Defined the native customer app as four primary pages: Today, Training, Nutrition, and Progress, including placement for food-photo correction, calories/macros, hydration, 16:8 reminders, trends, devices, and privacy settings.
+- Added the initial iOS 17+ SwiftUI application source, XcodeGen manifest, four-tab shell, English/Chinese localization, in-memory hydration and nutrition-plan interactions, and explicit placeholders for unconnected capabilities.
+- Added the pure Swift `TrainingOSCore` package with cross-platform models, service contracts, food-recognition draft requirements, and first-training anchor tests.
 
 ### Changed
 
