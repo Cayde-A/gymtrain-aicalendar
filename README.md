@@ -53,6 +53,7 @@ The project starts from TrainingOS V4: a PR-centered training methodology with G
 - [Local Voice Input](docs/37_local_voice_input.md)
 - [Supabase Monthly Upload](docs/38_supabase_monthly_upload.md)
 - [Garmin Personal API Migration](docs/39_garmin_personal_api_migration.md)
+- [Mobile Customer Information Architecture](docs/40_mobile_customer_information_architecture.md)
 - [Garmin Provider Failure Recheck](docs/24_garmin_provider_recheck.md)
 - [Historical garmin-data-export Import](docs/25_historical_garmin_data_export_import.md)
 - [Local SQLite Schema](schema/local_sqlite.sql)
@@ -75,6 +76,11 @@ V4 should be treated as the first testable operating model:
 Implementation status has advanced beyond the original V4 documentation baseline: local SQLite, Garmin recovery/activity import, correction UI, PR tracking, AI trigger policy, Garmin workout payload generation, and Garmin push are available as MVP components. The remaining work is reliability, adapter hardening, end-to-end automation, and broader user testing.
 
 The project reuses Garmin transports and general infrastructure, while TrainingOS owns normalization, data-quality checks, PR rules, training planning, trigger policy, and privacy lifecycle. See [Reuse Integration and TrainingOS-Owned Core](docs/17_reuse_integration_and_self_built_core.md).
+
+The native customer app is constrained to four primary destinations: Today,
+Training, Nutrition, and Progress. Settings remain inside Progress; developer
+diagnostics and credentials are excluded from customer builds. See
+[Mobile Customer Information Architecture](docs/40_mobile_customer_information_architecture.md).
 
 ## MVP Garmin Usage Flow
 

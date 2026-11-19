@@ -64,6 +64,10 @@ Milestones:
 - V6.9: Export approved planned rounds into Garmin-compatible workout structure if feasible.
 - V6.10: Add monthly minimized Supabase sync and post-sync cache cleanup.
 - V6.11: Add adapter capability reporting, structured provider errors, and fallback selection.
+- V6.12: Build the native four-tab customer shell: Today, Training, Nutrition, and Progress.
+- V6.13: Add water logging, nutrition-plan selection, 16:8 eating windows, quiet hours, and local reminders.
+- V6.14: Add manual/barcode food entry and editable photo-based food recognition.
+- V6.15: Add customer-safe account, device, notification, privacy, export, and deletion controls inside Progress settings.
 
 Exit criteria:
 
@@ -74,3 +78,5 @@ Exit criteria:
 - Calendar is updated after completion.
 - AI produces actionable next targets.
 - Monthly cloud sync works without uploading raw Garmin payloads or private notes.
+- Customer navigation never exceeds four primary destinations.
+- Food-photo estimates require user correction before they affect nutrition totals.

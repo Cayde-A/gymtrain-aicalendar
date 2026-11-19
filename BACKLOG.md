@@ -54,6 +54,12 @@
 
 ## Next
 
+- Build a native mobile shell with exactly four customer tabs: Today, Training,
+  Nutrition, and Progress; keep operator diagnostics out of customer builds.
+- Add local nutrition and hydration models, manual entry, 16:8 eating windows,
+  quiet hours, and notification scheduling before photo recognition.
+- Add editable food photo/barcode recognition only after deterministic manual
+  nutrition logging and correction are reliable.
 - Evaluate gccli remote writes only in an isolated upload/schedule/cleanup test account flow.
 - Live-verify Google Calendar create, repeat-update, and completed-summary patch after user OAuth authorization.
 - Live-verify one structured AI review after user API-key authorization.
