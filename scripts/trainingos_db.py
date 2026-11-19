@@ -1050,6 +1050,59 @@ def get_recent_sessions(connection: sqlite3.Connection, limit: int = 10) -> list
     return [dict(row) for row in rows]
 
 
+def training_anchor_state(
+    connection: sqlite3.Connection,
+    on_or_before: str | None = None,
+    athlete_id: str = DEFAULT_ATHLETE_ID,
+) -> dict[str, Any]:
+    """Report whether a completed session with an active set can anchor analysis."""
+    date_clause = "and substr(cs.completed_at, 1, 10) <= ?" if on_or_before else ""
+    params: list[Any] = [athlete_id]
+    if on_or_before:
+        params.append(on_or_before)
+    session_count = int(
+        connection.execute(
+            f"""
+            select count(*)
+            from completed_sessions cs
+            where cs.athlete_id = ? {date_clause}
+            """,
+            params,
+        ).fetchone()[0]
+    )
+    row = connection.execute(
+        f"""
+        select cs.id, cs.completed_at
+        from completed_sessions cs
+        where cs.athlete_id = ? {date_clause}
+          and exists (
+            select 1 from set_logs sl
+            where sl.completed_session_id = cs.id
+              and lower(coalesce(sl.set_type, '')) != 'rest'
+          )
+        order by cs.completed_at desc, cs.created_at desc
+        limit 1
+        """,
+        params,
+    ).fetchone()
+    if row is not None:
+        return {
+            "status": "ready",
+            "ready": True,
+            "session_count": session_count,
+            "anchor_session_id": str(row["id"]),
+            "anchor_training_date": str(row["completed_at"])[:10],
+        }
+    status = "waiting_for_first_training" if session_count == 0 else "first_training_needs_data"
+    return {
+        "status": status,
+        "ready": False,
+        "session_count": session_count,
+        "anchor_session_id": None,
+        "anchor_training_date": None,
+    }
+
+
 def training_date_from_completed_at(value: str | None) -> str:
     return (value or "")[:10]
 

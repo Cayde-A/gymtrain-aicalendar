@@ -104,11 +104,29 @@ class TrainingOSPipelineTestCase(unittest.TestCase):
         values.update(overrides)
         return trainingos_pipeline.PipelineOptions(**values)
 
-    def test_pipeline_stops_at_quality_gate(self):
+    def test_pipeline_waits_for_first_completed_training_anchor(self):
         exit_code, report = trainingos_pipeline.run_pipeline(self.options(), FakeRunner())
-        self.assertEqual(exit_code, 2)
-        self.assertEqual(report["status"], "quality_blocked")
-        self.assertFalse(report["quality"]["analysis_ready"])
+        self.assertEqual(exit_code, 3)
+        self.assertEqual(report["status"], "waiting_for_first_training")
+        self.assertFalse(report["training_anchor"]["ready"])
+        self.assertIsNone(report["quality"])
+
+    def test_pipeline_waits_when_imported_activity_has_no_active_sets(self):
+        with trainingos_db.connect(self.db_path) as connection:
+            trainingos_db.save_imported_workout(
+                connection,
+                {
+                    "provider": "garmin",
+                    "external_activity_id": "empty-first-activity",
+                    "completed_at": "2026-10-04 09:00:00",
+                    "session_type": "strength_training",
+                    "sets": [],
+                },
+            )
+        exit_code, report = trainingos_pipeline.run_pipeline(self.options(), FakeRunner())
+        self.assertEqual(exit_code, 3)
+        self.assertEqual(report["status"], "first_training_needs_data")
+        self.assertIsNone(report["quality"])
 
     def test_pipeline_exports_review_packet_when_review_is_missing(self):
         self.save_chest_session()
@@ -258,6 +276,26 @@ class TrainingOSPipelineTestCase(unittest.TestCase):
         self.assertEqual(report["status"], "sync_failed")
         self.assertTrue(report["error"]["retryable"])
         self.assertEqual(len(runner.commands), 1)
+
+    def test_sync_expands_history_once_when_local_anchor_is_missing(self):
+        commands = []
+
+        def runner(command):
+            commands.append(command)
+            if "--days" in command and command[command.index("--days") + 1] == "180":
+                self.save_chest_session()
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        exit_code, report = trainingos_pipeline.run_pipeline(
+            self.options(sync_garmin=True),
+            runner,
+        )
+        self.assertEqual(exit_code, 3)
+        self.assertEqual(report["status"], "needs_ai_review")
+        self.assertEqual(len(commands), 3)
+        self.assertEqual(report["sync"][-1]["phase"], "anchor_lookup")
+        self.assertEqual(report["sync"][-1]["lookback_days"], 180)
+        self.assertTrue(report["training_anchor"]["ready"])
 
 
 if __name__ == "__main__":

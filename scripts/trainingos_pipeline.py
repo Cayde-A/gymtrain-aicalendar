@@ -73,6 +73,7 @@ class PipelineOptions:
     output_dir: Path = DEFAULT_OUTPUT_DIR
     sync_garmin: bool = False
     activity_days: int = 3
+    anchor_lookback_days: int = 180
     recovery_days: int = 3
     ai_response_path: Path | None = None
     preset_override: str | None = None
@@ -190,6 +191,22 @@ def run_sync(options: PipelineOptions, runner: CommandRunner) -> list[dict[str, 
         if completed.returncode != 0:
             break
     return results
+
+
+def anchor_lookup_command(options: PipelineOptions) -> list[str]:
+    return [
+        sys.executable,
+        str(ROOT / "scripts" / "garmin_activity_import.py"),
+        "--days",
+        str(options.anchor_lookback_days),
+        "--end-date",
+        options.training_date,
+        "--strength-only",
+        "--limit",
+        "5",
+        "--db",
+        str(options.db_path),
+    ]
 
 
 def matching_review_id(connection: Any, training_date: str, response_text: str) -> str | None:
@@ -516,6 +533,7 @@ def run_pipeline(options: PipelineOptions, runner: CommandRunner = run_command) 
         "target_date": options.target_date,
         "status": "started",
         "sync": [],
+        "training_anchor": None,
         "quality": None,
         "review": None,
         "plan": None,
@@ -531,10 +549,42 @@ def run_pipeline(options: PipelineOptions, runner: CommandRunner = run_command) 
             report["error"] = {"code": "garmin_sync_failed", "retryable": True}
             with trainingos_db.connect(options.db_path) as connection:
                 return finish(connection, options, report, 4, report_path)
+        with trainingos_db.connect(options.db_path) as connection:
+            initial_anchor = trainingos_db.training_anchor_state(connection, options.training_date)
+        if not initial_anchor["ready"] and options.anchor_lookback_days > options.activity_days:
+            completed = runner(anchor_lookup_command(options))
+            report["sync"].append(
+                {
+                    "script": "garmin_activity_import.py",
+                    "phase": "anchor_lookup",
+                    "lookback_days": options.anchor_lookback_days,
+                    "returncode": completed.returncode,
+                }
+            )
+            if completed.returncode != 0:
+                report["status"] = "sync_failed"
+                report["error"] = {"code": "garmin_anchor_lookup_failed", "retryable": True}
+                with trainingos_db.connect(options.db_path) as connection:
+                    return finish(connection, options, report, 4, report_path)
 
     with trainingos_db.connect(options.db_path) as connection:
         if options.venue == DEFAULT_VENUE:
             gunyama_exercise_catalog.seed_catalog(connection)
+        anchor = trainingos_db.training_anchor_state(connection, options.training_date)
+        report["training_anchor"] = anchor
+        if not anchor["ready"]:
+            report["status"] = anchor["status"]
+            report["error"] = {
+                "code": "training_anchor_unavailable",
+                "message": (
+                    "No completed training history is available. Recovery synchronization may continue, "
+                    "but TrainingOS will wait for the first completed workout before analysis."
+                    if anchor["status"] == "waiting_for_first_training"
+                    else "A completed activity exists but has no active sets. Sync or correct the first workout before analysis."
+                ),
+                "retryable": True,
+            }
+            return finish(connection, options, report, 3, report_path)
         quality = trainingos_quality.build_quality_report(
             connection,
             options.training_date,
@@ -701,6 +751,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR), help="Local pipeline artifact directory.")
     parser.add_argument("--sync-garmin", action="store_true", help="Import Garmin recovery and strength data first.")
     parser.add_argument("--activity-days", type=int, default=3)
+    parser.add_argument(
+        "--anchor-lookback-days",
+        type=int,
+        default=180,
+        help="One-time extended Strength history lookup when no local training anchor exists.",
+    )
     parser.add_argument("--recovery-days", type=int, default=3)
     parser.add_argument("--ai-response", help="JSON AI review response to save before finalization.")
     parser.add_argument("--preset", choices=sorted(trainingos_garmin_payload.PRESETS), help="Override reviewed preset.")
@@ -725,6 +781,7 @@ def main() -> int:
         output_dir=Path(args.output_dir),
         sync_garmin=args.sync_garmin,
         activity_days=args.activity_days,
+        anchor_lookback_days=args.anchor_lookback_days,
         recovery_days=args.recovery_days,
         ai_response_path=Path(args.ai_response) if args.ai_response else None,
         preset_override=args.preset,

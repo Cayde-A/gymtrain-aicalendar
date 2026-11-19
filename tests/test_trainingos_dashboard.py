@@ -74,6 +74,8 @@ class TrainingOSDashboardTestCase(unittest.TestCase):
         self.assertEqual(snapshot["body_metrics"]["values"]["body_weight_kg"], 80)
         self.assertEqual(snapshot["program_cycle"]["week"], 3)
         self.assertEqual(snapshot["estimated_1rm_prs"][0]["exercise"], "Bench Press")
+        self.assertEqual(snapshot["training_anchor"]["status"], "ready")
+        self.assertEqual(snapshot["training_anchor"]["anchor_training_date"], "2026-10-03")
 
     def test_empty_snapshot_does_not_create_program_cycle(self):
         with trainingos_db.connect(self.db_path) as connection:
@@ -85,6 +87,7 @@ class TrainingOSDashboardTestCase(unittest.TestCase):
         self.assertEqual(snapshot["recovery_trends"], [])
         self.assertIsNone(snapshot["health_details"]["sleep"])
         self.assertEqual(cycle_count, 0)
+        self.assertEqual(snapshot["training_anchor"]["status"], "waiting_for_first_training")
 
 
 if __name__ == "__main__":

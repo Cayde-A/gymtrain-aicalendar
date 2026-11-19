@@ -245,6 +245,14 @@ def run_review(
     requester: Requester = request_openai,
     force: bool = False,
 ) -> tuple[int, dict[str, Any]]:
+    anchor = trainingos_db.training_anchor_state(connection, training_date)
+    if not anchor["ready"]:
+        return 3, {
+            "status": anchor["status"],
+            "training_anchor": anchor,
+            "message": "TrainingOS will wait for the first completed workout before analysis.",
+            "api_called": False,
+        }
     existing = existing_structured_review(connection, training_date)
     if existing and not force:
         return 0, {
@@ -325,6 +333,21 @@ def main() -> int:
     db_path = Path(args.db)
     trainingos_db.init_db(db_path)
     with trainingos_db.connect(db_path) as connection:
+        anchor = trainingos_db.training_anchor_state(connection, args.date)
+        if not anchor["ready"]:
+            print(
+                json.dumps(
+                    {
+                        "status": anchor["status"],
+                        "training_anchor": anchor,
+                        "message": "TrainingOS will wait for the first completed workout before analysis.",
+                        "api_called": False,
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
+            return 3
         packet = trainingos_db.build_day_ai_review_packet(connection, args.date)
         request_payload = build_request(packet, args.model)
         output_dir = Path(args.output_dir)

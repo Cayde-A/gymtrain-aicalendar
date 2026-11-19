@@ -8,6 +8,9 @@
 
 ## Recently Completed
 
+- Added a first-training waiting state so new or interrupted users can continue
+  recovery sync without triggering parsing, AI analysis, planning, or Garmin
+  push before a usable completed-workout anchor exists.
 - Live-verified official Personal API recovery reads and two recent Strength
   activities. The Personal API summaries omitted sets, so the importer now
   falls back to the official Garmin FIT SDK and recovered 65 sets (31 active)

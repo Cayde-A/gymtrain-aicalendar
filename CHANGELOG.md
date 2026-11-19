@@ -19,6 +19,8 @@
 - Added verified cleanup of temporary monthly sync packages after Supabase hash read-back, guarded by local retention policy, safe-path checks, and package SHA-256 matching.
 - Added a bounded official FIT SDK fallback for Personal API strength activities whose summary/detail responses omit exercise sets.
 - Live-verified two official Personal API Strength imports: 65 total sets, 31 active sets, and no missing reps, missing weights, abnormal weights, or unknown exercise mappings.
+- Added a first-training anchor gate: recovery can keep syncing, while activity parsing, AI review, plan generation, and Garmin push wait for the first completed workout with an active set.
+- Added explicit Dashboard and pipeline states for no training history and imported activities that contain no active sets.
 
 ### Changed
 

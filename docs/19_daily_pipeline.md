@@ -1,5 +1,24 @@
 # Daily Pipeline
 
+## First Training Gate
+
+Before quality checks or AI packet creation, the pipeline looks for a completed
+session on or before the source date with at least one non-rest set.
+
+When Garmin sync is enabled and the normal recent window finds no local anchor,
+the pipeline performs one extended 180-day Strength lookup, limited to five
+activities. This covers training interruptions without making every daily sync
+expensive. `--anchor-lookback-days` can adjust or disable the expansion by
+setting it no higher than `--activity-days`.
+
+- No completed sessions: `waiting_for_first_training`, exit code `3`.
+- Session exists but has no active sets: `first_training_needs_data`, exit code `3`.
+- Valid anchor exists: continue to the normal quality and review gates.
+
+Both waiting states permit recovery synchronization but skip parsing, AI calls,
+plan generation, and Garmin writes. The gate clears automatically after the
+first valid workout is imported or entered manually.
+
 ## Purpose
 
 `trainingos_pipeline.py` is the observable state machine for the current TrainingOS daily workflow:

@@ -105,6 +105,17 @@ Watch face
 9. After saving the workout, let Garmin Connect sync the completed activity.
 10. TrainingOS imports or reconciles the Garmin activity, then AI reviews the result and prepares the next training recommendation.
 
+For a new user or after an account has no usable training history, recovery
+metrics may continue syncing but TrainingOS stays in
+`waiting_for_first_training`. It does not parse training, call AI, generate a
+plan, or push to Garmin until the first completed workout contains at least one
+active set. An imported activity without active sets is shown as
+`first_training_needs_data` and must be resynced or corrected first.
+
+To distinguish a new user from a training interruption, a synchronized daily
+pipeline with no local anchor performs one bounded 180-day Garmin Strength
+history lookup (maximum five activities) before entering the waiting state.
+
 Do not store personal Garmin credentials, OAuth tokens, raw health exports, device identifiers, or private workout results in Git.
 
 ## Privacy Model
@@ -208,6 +219,9 @@ http://127.0.0.1:8787
 The Dashboard stores Garmin health data in five local categories: sleep, HRV,
 energy/activity, vitals, and readiness. It shows a 14-day recovery trend,
 sleep-stage composition, and detailed daily indicators. The compact
+Dashboard also shows the first-training waiting state when no usable completed
+session exists, so an interruption or empty history is not reported as a
+generic analysis failure.
 `daily_recovery_metrics` summary remains the planning-engine contract; detailed
 category rows stay local and are not included in the default monthly cloud
 upload.

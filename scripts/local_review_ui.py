@@ -344,6 +344,7 @@ class ReviewServer:
         body_values = body_context.get("values") or {}
         cycle = snapshot["program_cycle"] or {}
         health_details = snapshot["health_details"]
+        anchor = snapshot["training_anchor"]
         day_rows = "".join(
             f"<tr><td>{safe(item.get('training_date'))}</td>"
             f"<td>{safe(item.get('session_count'))}</td>"
@@ -370,9 +371,21 @@ class ReviewServer:
             if notice
             else ""
         )
+        anchor_notice = ""
+        if anchor["status"] == "waiting_for_first_training":
+            anchor_notice = (
+                '<div class="notice">尚未找到可作为分析锚点的历史训练。恢复指标会继续同步，'
+                'TrainingOS 将等待你完成第一次训练后再进行解析、AI 复盘和次日计划。</div>'
+            )
+        elif anchor["status"] == "first_training_needs_data":
+            anchor_notice = (
+                '<div class="notice error">已找到训练活动，但没有有效训练组。请先重新同步或校正第一次训练记录，'
+                '系统暂不进行 AI 解析。</div>'
+            )
         body = f"""{nav()}
         <h1>TrainingOS 总览</h1>
         {notice_html}
+        {anchor_notice}
         <div class="summary">
           <div class="field"><label>近 30 天训练日</label><strong>{safe(training['training_days'])}</strong></div>
           <div class="field"><label>训练次数</label><strong>{safe(training['session_count'])}</strong></div>

@@ -92,6 +92,13 @@ with Garmin's official FIT SDK. The ZIP/FIT is size-bounded, is never extracted
 to disk, and the normalized session records
 `garmin-connect-personal-api-python+garmin-fit-sdk` as its source.
 
+If the selected history window contains no completed workout and the local
+database has no earlier workout with an active set, the import still succeeds
+but records `waiting_for_first_training`. Recovery synchronization remains
+available. Training parsing, AI review, planning, and Garmin push wait until
+the user's first completed workout is available. A session shell without
+active sets records `first_training_needs_data` instead of becoming an anchor.
+
 ## Security
 
 The preferred read path exchanges the Personal API key for a 24-hour bearer token. The key and token cache are credentials.

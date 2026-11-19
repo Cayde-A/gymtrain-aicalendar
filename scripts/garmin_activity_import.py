@@ -388,18 +388,27 @@ def main() -> int:
                 },
             )
 
+        anchor = trainingos_db.training_anchor_state(connection, end.isoformat())
+
     write_json(NORMALIZED_ACTIVITY_DIR / "completed_activities.json", imported)
     trainingos_observability.record_event(
         "garmin_activity_import_completed",
+        status="ok" if anchor["ready"] else "warning",
         details={
             "imported_count": len(imported),
             "fit_fallback_count": fit_fallback_count,
+            "training_anchor_status": anchor["status"],
             "db_path": args.db,
         },
     )
     print(f"Imported {len(imported)} Garmin completed activities into local SQLite.")
     print(f"Database: {args.db}")
     print(f"Normalized output: {NORMALIZED_ACTIVITY_DIR / 'completed_activities.json'}")
+    if not anchor["ready"]:
+        print(
+            "TrainingOS is waiting for the first completed workout with active sets; "
+            "recovery sync may continue, but analysis and planning are paused."
+        )
     return 0
 
 

@@ -47,6 +47,29 @@ class TrainingOSQualityTestCase(unittest.TestCase):
         self.assertTrue(report["analysis_ready"])
         self.assertEqual(report["training"]["active_set_count"], 1)
 
+    def test_training_anchor_requires_an_active_set_and_becomes_ready_after_first_workout(self):
+        with trainingos_db.connect(self.db_path) as connection:
+            initial = trainingos_db.training_anchor_state(connection, "2026-10-04")
+            trainingos_db.save_imported_workout(
+                connection,
+                {
+                    "provider": "garmin",
+                    "external_activity_id": "empty-anchor",
+                    "completed_at": "2026-10-03 09:00:00",
+                    "session_type": "strength_training",
+                    "sets": [],
+                },
+            )
+            incomplete = trainingos_db.training_anchor_state(connection, "2026-10-04")
+        self.save_session(
+            [{"exercise_name": "Bench Press", "set_order": 1, "set_type": "working", "weight_kg": 100, "reps": 5}]
+        )
+        with trainingos_db.connect(self.db_path) as connection:
+            ready = trainingos_db.training_anchor_state(connection, "2026-10-04")
+        self.assertEqual(initial["status"], "waiting_for_first_training")
+        self.assertEqual(incomplete["status"], "first_training_needs_data")
+        self.assertEqual(ready["status"], "ready")
+
     def test_missing_reps_blocks_analysis(self):
         self.save_session(
             [{"exercise_name": "Bench Press", "set_order": 1, "set_type": "ACTIVE", "weight_kg": 100, "reps": None}]

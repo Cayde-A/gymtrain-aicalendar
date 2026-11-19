@@ -85,6 +85,24 @@ class TrainingOSOpenAIReviewTestCase(unittest.TestCase):
         self.assertTrue(request["text"]["format"]["strict"])
         self.assertFalse(request["text"]["format"]["schema"]["additionalProperties"])
 
+    def test_review_without_training_anchor_never_calls_api(self):
+        empty_db = Path(self.tempdir.name) / "empty.sqlite"
+        trainingos_db.init_db(empty_db)
+        calls = []
+
+        def requester(payload, api_key):
+            calls.append(payload)
+            return 200, response_for(valid_review())
+
+        with trainingos_db.connect(empty_db) as connection:
+            code, result = trainingos_openai_review.run_review(
+                connection, "2026-10-04", "gpt-5-mini", True, "test-key", requester
+            )
+        self.assertEqual(code, 3)
+        self.assertEqual(result["status"], "waiting_for_first_training")
+        self.assertFalse(result["api_called"])
+        self.assertEqual(calls, [])
+
     def test_default_manual_policy_blocks_api_call(self):
         calls = []
 

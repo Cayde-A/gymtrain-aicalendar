@@ -124,6 +124,26 @@ class LocalReviewUiBodyMetricsTestCase(unittest.TestCase):
         self.assertIn("近 30 天训练日", rendered)
         self.assertIn('href="/training"', rendered)
         self.assertIn("暂无训练记录", rendered)
+        self.assertIn("等待你完成第一次训练后再进行解析", rendered)
+
+    def test_dashboard_reports_first_activity_without_active_sets(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "trainingos.sqlite"
+            app = local_review_ui.ReviewServer(db_path)
+            with trainingos_db.connect(db_path) as connection:
+                trainingos_db.save_imported_workout(
+                    connection,
+                    {
+                        "provider": "garmin",
+                        "external_activity_id": "empty-first-activity",
+                        "completed_at": "2026-10-04 09:00:00",
+                        "session_type": "strength_training",
+                        "sets": [],
+                    },
+                )
+            rendered = app.dashboard_page()
+        self.assertIn("没有有效训练组", rendered)
+        self.assertIn("暂不进行 AI 解析", rendered)
 
     def test_body_metrics_page_saves_to_local_database(self):
         with tempfile.TemporaryDirectory() as tmpdir:

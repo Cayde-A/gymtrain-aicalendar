@@ -149,6 +149,7 @@ def dashboard_snapshot(connection: Any, today: str | None = None) -> dict[str, A
     return {
         "version": "trainingos.dashboard.v2",
         "as_of": target.isoformat(),
+        "training_anchor": trainingos_db.training_anchor_state(connection, target.isoformat()),
         "window": {"start_date": start.isoformat(), "end_date": target.isoformat()},
         "training": {
             "training_days": len({str(row["completed_at"])[:10] for row in session_rows}),

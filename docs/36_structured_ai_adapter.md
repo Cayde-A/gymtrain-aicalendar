@@ -8,6 +8,10 @@ TrainingOS can send a compact post-workout packet to the OpenAI Responses API an
 - A live request requires both `--call` and `--confirm`.
 - The local trigger policy must permit `post_workout_ai`.
 - `OPENAI_API_KEY` must be available in the process environment.
+- A completed training anchor with at least one active set must exist on or
+  before the requested training date. Otherwise the adapter returns
+  `waiting_for_first_training` or `first_training_needs_data` without building
+  a request or consuming API capacity.
 - The request sets `store: false`.
 - The response must match the strict TrainingOS JSON Schema before it is saved.
 - A valid existing structured review is reused unless `--force` is supplied.
