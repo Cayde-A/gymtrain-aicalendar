@@ -6,14 +6,16 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
 
 try:
-    from . import garmin_import, trainingos_db, trainingos_observability
+    from . import garmin_import, garmin_provider, trainingos_db, trainingos_observability
 except ImportError:  # pragma: no cover - supports direct script execution.
     import garmin_import  # type: ignore
+    import garmin_provider  # type: ignore
     import trainingos_db  # type: ignore
     import trainingos_observability  # type: ignore
 
@@ -21,7 +23,6 @@ except ImportError:  # pragma: no cover - supports direct script execution.
 ROOT = Path(__file__).resolve().parents[1]
 RAW_ACTIVITY_DIR = ROOT / "exports" / "garmin" / "raw" / "activities"
 NORMALIZED_ACTIVITY_DIR = ROOT / "exports" / "garmin" / "normalized"
-DEFAULT_V03_TOKENSTORE = ROOT / "tokens" / "garmin-v03"
 SET_FIELD_MAPPINGS = {
     "exercise_name": ["exerciseName", "exercise", "name", "exercises[].category"],
     "set_order": ["setOrder", "orderNumber", "setNumber"],
@@ -42,23 +43,29 @@ ACTIVITY_FIELD_MAPPINGS = {
 
 
 def default_tokenstore() -> str:
-    configured = garmin_import.os.getenv("GARMINTOKENS")
-    if configured:
-        return configured
-    if DEFAULT_V03_TOKENSTORE.exists():
-        return str(DEFAULT_V03_TOKENSTORE)
-    return str(garmin_import.DEFAULT_TOKENSTORE)
+    return str(garmin_provider.default_tokenstore())
 
 
 def parse_args() -> argparse.Namespace:
-    garmin_import.load_dotenv_local()
+    garmin_provider.load_dotenv_local()
     parser = argparse.ArgumentParser(description="Import completed Garmin activities into local SQLite.")
-    parser.add_argument("--email", default=garmin_import.os.getenv("GARMIN_EMAIL"), help="Garmin email.")
-    parser.add_argument("--password", default=garmin_import.os.getenv("GARMIN_PASSWORD"), help="Garmin password.")
+    parser.add_argument("--email", default=os.getenv("GARMIN_EMAIL"), help="Garmin email.")
+    parser.add_argument("--password", default=os.getenv("GARMIN_PASSWORD"), help="Garmin password.")
     parser.add_argument(
         "--tokenstore",
         default=default_tokenstore(),
         help="Local Garmin token cache directory.",
+    )
+    parser.add_argument(
+        "--read-provider",
+        choices=("auto", "personal", "legacy"),
+        default=os.getenv("GARMIN_READ_PROVIDER", "auto"),
+        help="Garmin read transport. Auto prefers the official Personal API when a key is configured.",
+    )
+    parser.add_argument(
+        "--personal-api-key-file",
+        default=os.getenv("GARMIN_PERSONAL_API_KEY_FILE"),
+        help="Optional Garmin Personal API key file.",
     )
     parser.add_argument("--db", default=str(trainingos_db.DEFAULT_DB_PATH), help="SQLite database path.")
     parser.add_argument("--days", type=int, default=7, help="Number of recent days to search.")
@@ -141,7 +148,16 @@ def fetch_activity_payload(client: Any, activity: dict[str, Any]) -> dict[str, A
         )
         if sets_result.get("ok"):
             exercise_sets = sets_result.get("data")
+        if isinstance(details, dict):
+            summarized_sets = (
+                details.get("summarizedExerciseSets")
+                or details.get("exerciseSets")
+                or details.get("activityExerciseSets")
+            )
+            if summarized_sets:
+                exercise_sets = summarized_sets
     return {
+        "source_tool": garmin_provider.client_source_tool(client),
         "summary": activity,
         "details": details,
         "exercise_sets": exercise_sets,
@@ -243,6 +259,7 @@ def normalize_activity(payload: dict[str, Any], raw_payload_path: str | None = N
     sets = extract_sets(payload.get("exercise_sets"), str(name) if name else None)
     return {
         "provider": "garmin",
+        "source_tool": payload.get("source_tool", garmin_provider.SOURCE_TOOL),
         "external_activity_id": external_id,
         "started_at": started_at,
         "completed_at": completed_at,
@@ -277,8 +294,17 @@ def main() -> int:
         },
     )
     print(f"TrainingOS import: logging in and reading Garmin activities from {start.isoformat()} to {end.isoformat()}.")
-    client = garmin_import.login(args.email, args.password, args.tokenstore)
-    trainingos_observability.record_event("garmin_login_completed")
+    client = garmin_provider.login_read(
+        args.email,
+        args.password,
+        args.tokenstore,
+        provider=args.read_provider,
+        personal_api_key_file=args.personal_api_key_file,
+    )
+    trainingos_observability.record_event(
+        "garmin_login_completed",
+        details=garmin_provider.provider_metadata(client),
+    )
     activities = fetch_activities(client, start.isoformat(), end.isoformat(), args.activity_type)
     fetched_count = len(activities)
     if args.strength_only:

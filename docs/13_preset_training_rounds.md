@@ -20,6 +20,8 @@ Garmin watches are good at:
 TrainingOS is better suited for:
 
 - selecting today's exercises;
+- choosing one primary large muscle group for the session;
+- reducing muscle overlap across adjacent training days;
 - choosing top-set target;
 - choosing back-off volume;
 - using Garmin recovery data;
@@ -46,29 +48,73 @@ Recommended daily flow:
 
 A training round is a planned block of work.
 
+TrainingOS should first select the primary large muscle group for the day. The plan should then build rounds around that target and keep secondary work limited.
+
+Hard constraints:
+
+- One session has one primary large muscle group.
+- Adjacent days should avoid close overlap in prime movers, stabilizers, joints, and grip demands.
+- Chest/shoulder training should usually be followed by legs, not back or arms.
+- Back and arm work can return after the pressing chain has had more distance, unless recovery data and user notes show unusually low fatigue.
+- If the prior day was chest/shoulders and recovery is moderate or low, the default next plan is leg priority with limited upper-body involvement.
+- Medium/high-intensity core sessions can be inserted between the main split days only if they do not impair the next day's prime movers, bracing, or grip.
+
+Default split with core inserted:
+
+```text
+Chest -> Core A -> Legs -> Core B -> Pull -> Rest
+```
+
+Current Garmin-compatible Pull preset:
+
+- lat pull-down: 4 x 8;
+- seated cable row: 3 x 10;
+- face pull: 3 x 12;
+- cable biceps curl: 2 x 12.
+
+The exercise category/name pairs are checked against the installed `python-garminconnect` exercise catalog in automated tests.
+
+Core A between chest and legs:
+
+- kneeling cable crunch;
+- weighted dead bug;
+- side plank;
+- no hanging leg raise or toes-to-bar;
+- no high-volume hip-flexor work.
+
+Core B between legs and pull:
+
+- weighted crunch;
+- Russian twist;
+- McGill curl-up;
+- no hanging or grip-heavy core;
+- no heavy lower-back fatigue.
+
 Example:
 
 ```text
-Round 1: Chest Press
-Purpose: Top Set / PR exposure
-Target: 92.5 kg x 3-5
-RPE cap: 9
-Decision rule:
-  - If warm-up feels fast, attempt 92.5 x 5
-  - If slow, keep 90 x 5
+Primary target: Legs
 
-Round 2: Chest Press Back-off
-Target: 80 kg x 6-7 x 3
+Round 1: Leg Press
+Purpose: main lower-body work
+Target: 4 x 10
+RPE cap: 8
+Decision rule:
+  - If warm-up feels fast, keep planned load
+  - If slow, reduce load or remove one set
+
+Round 2: Romanian Deadlift
+Target: 3 x 8
 RPE cap: 8
 
-Round 3: Shoulder Press
-Target: 45 kg x 7-8 x 3
-
-Round 4: Cable Fly
+Round 3: Goblet Squat
 Target: 3 x 12
 
-Round 5: Stair Climber
-Target: 20-25 min, HR 135-150
+Round 4: Standing Calf Raise
+Target: 2 x 15
+
+Round 5: Plank
+Target: 2 easy sets
 ```
 
 ## Data Inputs
@@ -89,7 +135,10 @@ Morning plan should use:
 TrainingOS should produce:
 
 - session type;
+- primary large muscle group;
+- avoided overlap from the previous training day;
 - exercise order;
+- short movement cues for each exercise;
 - top-set target;
 - back-off sets;
 - accessory volume;
@@ -98,6 +147,26 @@ TrainingOS should produce:
 - fallback rule if recovery is poor;
 - short note for Garmin/Calendar;
 - full note for TrainingOS.
+
+## Movement Cues
+
+TrainingOS should maintain its own text cues instead of copying Garmin animation or instruction content.
+
+Each planned exercise can include one short cue:
+
+```text
+Bench Press:
+Shoulder blades set, feet planted, controlled touch, press without bouncing.
+```
+
+Rules:
+
+- Keep cues short enough for watch and phone display.
+- Describe one to four form priorities, not a full coaching article.
+- Avoid private, copyrighted, or scraped Garmin animation text.
+- Prefer safety and repeatability: setup, range, tempo, stop condition.
+- If Garmin accepts step descriptions, include the cue in the workout payload.
+- If Garmin does not display the cue on a device, TrainingOS Web/App/Shortcut remains the source of truth.
 
 ## Garmin Execution Options
 

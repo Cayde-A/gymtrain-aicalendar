@@ -17,7 +17,14 @@ completed_sessions
 exercise_catalog
 set_logs
 pr_records
+pipeline_runs
+garmin_write_operations
 daily_recovery_metrics
+daily_sleep_metrics
+daily_hrv_metrics
+daily_energy_metrics
+daily_vitals_metrics
+daily_readiness_metrics
 body_metrics
 calendar_events
 ai_reviews
@@ -47,9 +54,19 @@ create table exercise_catalog (
   primary_muscle text,
   equipment text,
   location text,
+  garmin_category text,
+  garmin_exercise_name text,
+  venue_availability_status text not null default 'unknown',
+  verification_level text not null default 'unverified',
+  verification_source text,
+  last_verified_on date,
   is_active boolean not null default true,
   created_at timestamptz not null default now()
 );
+
+create unique index exercise_catalog_garmin_pair_idx
+on exercise_catalog (garmin_category, garmin_exercise_name)
+where garmin_category is not null and garmin_exercise_name is not null;
 
 create table training_blocks (
   id uuid primary key default gen_random_uuid(),
@@ -88,6 +105,9 @@ create table completed_sessions (
   id uuid primary key default gen_random_uuid(),
   planned_session_id uuid references planned_sessions(id),
   athlete_id uuid not null references athletes(id),
+  provider text,
+  source_tool text,
+  external_activity_id text,
   started_at timestamptz,
   completed_at timestamptz not null default now(),
   session_type text not null,
@@ -138,6 +158,7 @@ create table daily_recovery_metrics (
   athlete_id uuid not null references athletes(id),
   metric_date date not null,
   provider text not null default 'garmin',
+  source_tool text,
   sleep_score numeric,
   sleep_duration_minutes integer,
   hrv_status text,
@@ -181,13 +202,50 @@ create table calendar_events (
 
 create table ai_reviews (
   id uuid primary key default gen_random_uuid(),
-  completed_session_id uuid not null references completed_sessions(id),
+  completed_session_id uuid references completed_sessions(id),
+  planned_session_id uuid references planned_sessions(id),
   review_type text not null default 'post_workout',
   decision text not null,
   summary text,
   next_target jsonb,
   risk_flags jsonb,
   created_at timestamptz not null default now()
+);
+
+create table pipeline_runs (
+  id uuid primary key default gen_random_uuid(),
+  athlete_id uuid not null references athletes(id),
+  source_training_date date not null,
+  target_date date not null,
+  status text not null,
+  review_id uuid references ai_reviews(id),
+  plan_json jsonb,
+  quality_report_json jsonb,
+  garmin_payload_path text,
+  push_result_path text,
+  error_json jsonb,
+  idempotency_key text not null unique,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table garmin_write_operations (
+  id uuid primary key default gen_random_uuid(),
+  athlete_id uuid not null references athletes(id),
+  idempotency_key text not null unique,
+  payload_hash text not null,
+  workout_name text not null,
+  schedule_date date not null,
+  status text not null default 'pending',
+  phase text not null default 'created',
+  workout_id bigint,
+  workout_schedule_id bigint,
+  attempt_count integer not null default 0,
+  next_retry_at timestamptz,
+  last_error_json jsonb,
+  result_json jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
 create table raw_import_cache (
@@ -246,6 +304,30 @@ create table privacy_retention_policies (
 );
 ```
 
+## Categorized Daily Health Model
+
+`daily_recovery_metrics` remains the stable, compact contract consumed by the
+planning, quality-gate, and Garmin-push pipeline. Richer Garmin fields are
+stored separately so that provider schema growth does not destabilize that
+contract:
+
+| Table | Responsibility | Example fields |
+|---|---|---|
+| `daily_sleep_metrics` | Sleep composition and sleep physiology | deep/light/REM/awake minutes, sleep SpO2, respiration |
+| `daily_hrv_metrics` | HRV trend and personal baseline | last-night average, weekly average, baseline range |
+| `daily_energy_metrics` | Movement and energy state | Body Battery range/charge/drain, calories, steps, floors, intensity minutes |
+| `daily_vitals_metrics` | Daily cardiovascular and respiratory state | heart rate, stress, respiration, pulse ox |
+| `daily_readiness_metrics` | Garmin readiness factors | score, level, factor percentages, short feedback |
+
+All six daily tables use the same idempotency key:
+
+```text
+(athlete_id, metric_date, provider)
+```
+
+Detailed daily health rows remain local by default. The monthly Supabase
+package continues to receive only allowlisted aggregate summaries.
+
 ## Local-First Privacy Rules
 
 - Local SQLite stores complete private training and recovery history.
@@ -259,4 +341,6 @@ create table privacy_retention_policies (
 - Whether nutrition should be in V5 or delayed to V6.
 - Whether Gunyama-specific equipment should be a separate table or metadata in `exercise_catalog`.
 - Whether planned exercises need a separate `planned_exercises` table before MVP.
-- Whether monthly summaries need exercise-level detail by default or only aggregate trends.
+- Monthly sync includes allowlisted exercise-level sets, volume, best sets, and
+  e1RM trends by default; raw sets, activity IDs, notes, and body metrics remain
+  local.

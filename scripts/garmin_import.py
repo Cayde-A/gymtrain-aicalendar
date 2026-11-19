@@ -15,19 +15,42 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import getpass
 import json
 import os
 import sys
-import contextlib
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+
+try:
+    from .garmin_provider import (
+        DEFAULT_TOKENSTORE,
+        call_first_available,
+        has_tokens,
+        import_garmin_client,
+        load_dotenv_local,
+        login,
+        login_read,
+        client_source_tool,
+        provider_metadata,
+    )
+except ImportError:  # pragma: no cover - supports direct script execution.
+    from garmin_provider import (  # type: ignore
+        DEFAULT_TOKENSTORE,
+        call_first_available,
+        has_tokens,
+        import_garmin_client,
+        load_dotenv_local,
+        login,
+        login_read,
+        client_source_tool,
+        provider_metadata,
+    )
 
 
 ROOT = Path(__file__).resolve().parents[1]
 RAW_DIR = ROOT / "exports" / "garmin" / "raw"
 NORMALIZED_DIR = ROOT / "exports" / "garmin" / "normalized"
-DEFAULT_TOKENSTORE = ROOT / "tokens" / "garmin"
+DAILY_HEALTH_DETAILS_PATH = NORMALIZED_DIR / "daily_health_details.json"
 NORMALIZED_FIELDS = [
     "sleep_score",
     "sleep_duration_minutes",
@@ -44,22 +67,30 @@ NORMALIZED_FIELDS = [
 FIELD_MAPPINGS = {
     "sleep_score": [
         "sleep.dailySleepDTO.sleepScores.overall.value",
+        "sleep.sleepScores.overall.value",
     ],
     "sleep_duration_minutes": [
         "sleep.dailySleepDTO.sleepTimeSeconds",
+        "sleep.sleepTimeSeconds",
     ],
     "hrv_status": [
         "hrv.hrvSummary.status",
     ],
     "resting_heart_rate": [
         "stats.restingHeartRate",
+        "stats.data[].heartRate.restingValue",
+        "stats[].heartRate.restingValue",
     ],
     "body_battery": [
         "stats.bodyBatteryMostRecentValue",
+        "stats.data[].bodyBattery.latestValue",
+        "stats[].bodyBattery.latestValue",
         "body_battery[].bodyBatteryValuesArray[][]",
     ],
     "stress_score": [
         "stats.averageStressLevel",
+        "stats.data[].stress.avgLevel",
+        "stats[].stress.avgLevel",
     ],
     "training_readiness": [
         "training_readiness[].score",
@@ -69,26 +100,15 @@ FIELD_MAPPINGS = {
     ],
     "steps": [
         "stats.totalSteps",
+        "stats.data[].movement.steps.value",
+        "stats[].movement.steps.value",
     ],
     "calories": [
         "stats.totalKilocalories",
+        "stats.data[].calories.burnedTotal",
+        "stats[].calories.burnedTotal",
     ],
 }
-
-
-def load_dotenv_local() -> None:
-    env_path = ROOT / ".env.local"
-    if not env_path.exists():
-        return
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
-            os.environ[key] = value
 
 
 def parse_args() -> argparse.Namespace:
@@ -101,6 +121,17 @@ def parse_args() -> argparse.Namespace:
         default=os.getenv("GARMINTOKENS", str(DEFAULT_TOKENSTORE)),
         help="Local Garmin token cache directory. Defaults to tokens/garmin.",
     )
+    parser.add_argument(
+        "--read-provider",
+        choices=("auto", "personal", "legacy"),
+        default=os.getenv("GARMIN_READ_PROVIDER", "auto"),
+        help="Garmin read transport. Auto prefers the official Personal API when a key is configured.",
+    )
+    parser.add_argument(
+        "--personal-api-key-file",
+        default=os.getenv("GARMIN_PERSONAL_API_KEY_FILE"),
+        help="Optional Garmin Personal API key file. The official default and environment variable are also supported.",
+    )
     parser.add_argument("--days", type=int, default=7, help="Number of recent days to import.")
     parser.add_argument(
         "--end-date",
@@ -112,53 +143,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Save raw Garmin responses under exports/. This may contain private health data.",
     )
-    return parser.parse_args()
-
-
-def import_garmin_client() -> Any:
-    try:
-        from garminconnect import Garmin  # type: ignore
-    except ImportError as exc:
-        raise SystemExit(
-            "Missing dependency: garminconnect. Install with:\n"
-            "  python3 -m pip install -r requirements.txt"
-        ) from exc
-    return Garmin
-
-
-def has_tokens(tokenstore: Path) -> bool:
-    return (
-        ((tokenstore / "oauth1_token.json").exists() and (tokenstore / "oauth2_token.json").exists())
-        or (tokenstore / "garmin_tokens.json").exists()
+    parser.add_argument(
+        "--write-db",
+        action="store_true",
+        help="Write normalized recovery metrics into the local SQLite database.",
     )
-
-
-def login(email: str | None, password: str | None, tokenstore: str) -> Any:
-    Garmin = import_garmin_client()
-    tokenstore_path = Path(tokenstore).expanduser()
-
-    if not email:
-        email = os.getenv("GARMIN_EMAIL")
-    if not password:
-        password = os.getenv("GARMIN_PASSWORD")
-
-    if not has_tokens(tokenstore_path):
-        if not email:
-            email = input("Garmin email: ").strip()
-        if not password:
-            password = getpass.getpass("Garmin password: ")
-
-    client = Garmin(email, password) if email and password else Garmin()
-    try:
-        client.login(str(tokenstore_path))
-    except TypeError:
-        client.login()
-    tokenstore_path.mkdir(parents=True, exist_ok=True)
-    garth = getattr(client, "garth", None)
-    if garth is not None:
-        with contextlib.suppress(Exception):
-            garth.dump(str(tokenstore_path))
-    return client
+    parser.add_argument(
+        "--db",
+        default=str(ROOT / "data" / "trainingos.sqlite"),
+        help="SQLite database path used with --write-db.",
+    )
+    return parser.parse_args()
 
 
 def date_range(end_date: str, days: int) -> list[dt.date]:
@@ -166,28 +161,11 @@ def date_range(end_date: str, days: int) -> list[dt.date]:
     return [end - dt.timedelta(days=offset) for offset in reversed(range(days))]
 
 
-def call_first_available(client: Any, candidates: list[tuple[str, tuple[Any, ...]]]) -> dict[str, Any]:
-    failures: dict[str, str] = {}
-    for method_name, args in candidates:
-        method: Callable[..., Any] | None = getattr(client, method_name, None)
-        if not callable(method):
-            failures[method_name] = "method not available"
-            continue
-        try:
-            return {
-                "source_method": method_name,
-                "ok": True,
-                "data": method(*args),
-            }
-        except Exception as exc:  # noqa: BLE001 - keep exploration resilient.
-            failures[method_name] = f"{type(exc).__name__}: {exc}"
-    return {"ok": False, "failures": failures}
-
-
 def fetch_day(client: Any, metric_date: dt.date) -> dict[str, Any]:
     date_text = metric_date.isoformat()
     return {
         "date": date_text,
+        "source_tool": client_source_tool(client),
         "stats": call_first_available(
             client,
             [
@@ -224,6 +202,28 @@ def fetch_day(client: Any, metric_date: dt.date) -> dict[str, Any]:
             ],
         ),
     }
+
+
+def fill_training_readiness_from_legacy(raw_days: list[dict[str, Any]], legacy_client: Any) -> int:
+    updated = 0
+    for raw in raw_days:
+        if raw.get("training_readiness", {}).get("ok"):
+            continue
+        result = call_first_available(
+            legacy_client,
+            [
+                ("get_training_readiness", (raw["date"],)),
+                ("get_training_readiness_data", (raw["date"],)),
+            ],
+        )
+        if not result.get("ok"):
+            continue
+        raw["training_readiness"] = result
+        raw.setdefault("field_sources", {})["training_readiness"] = client_source_tool(
+            legacy_client
+        )
+        updated += 1
+    return updated
 
 
 def deep_find_number(payload: Any, names: set[str]) -> float | int | None:
@@ -337,6 +337,116 @@ def unwrap(result: dict[str, Any]) -> Any:
     return None
 
 
+def minutes_from_seconds(value: Any) -> int | None:
+    return round(value / 60) if isinstance(value, (int, float)) else None
+
+
+def source_tool_for_day(raw: dict[str, Any]) -> str:
+    field_sources = raw.get("field_sources") or {}
+    source_tool = raw.get("source_tool", "python-garminconnect")
+    return "+".join(dict.fromkeys([source_tool, *field_sources.values()]))
+
+
+def normalize_health_details(raw: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Normalize richer Garmin fields into stable, category-specific records."""
+    payload = {
+        "stats": unwrap(raw["stats"]),
+        "sleep": unwrap(raw["sleep"]),
+        "hrv": unwrap(raw["hrv"]),
+        "training_readiness": unwrap(raw["training_readiness"]),
+    }
+    base = {
+        "provider": "garmin",
+        "source_tool": source_tool_for_day(raw),
+        "metric_date": raw["date"],
+    }
+
+    def number(*paths: str) -> float | int | None:
+        return first_number(payload, list(paths))
+
+    def string(*paths: str) -> str | None:
+        return first_string(payload, list(paths))
+
+    def sleep_minutes(*names: str) -> int | None:
+        paths = [f"sleep.{name}" for name in names]
+        paths += [f"sleep.dailySleepDTO.{name}" for name in names]
+        return minutes_from_seconds(first_number(payload, paths))
+
+    return {
+        "sleep": {
+            **base,
+            "deep_sleep_minutes": sleep_minutes("deepSleepSeconds"),
+            "light_sleep_minutes": sleep_minutes("lightSleepSeconds"),
+            "rem_sleep_minutes": sleep_minutes("remSleepSeconds"),
+            "awake_minutes": sleep_minutes("awakeSleepSeconds", "awakeTimeSeconds"),
+            "nap_minutes": sleep_minutes("napTimeSeconds"),
+            "average_sleep_stress": number("sleep.avgSleepStress", "sleep.dailySleepDTO.avgSleepStress"),
+            "average_sleep_heart_rate": number("sleep.avgHeartRate", "sleep.dailySleepDTO.avgHeartRate"),
+            "average_spo2": number("sleep.averageSpO2Value", "sleep.dailySleepDTO.averageSpO2Value"),
+            "minimum_spo2": number("sleep.lowestSpO2Value", "sleep.dailySleepDTO.lowestSpO2Value"),
+            "maximum_spo2": number("sleep.highestSpO2Value", "sleep.dailySleepDTO.highestSpO2Value"),
+            "average_respiration": number("sleep.averageRespirationValue", "sleep.dailySleepDTO.averageRespirationValue"),
+            "minimum_respiration": number("sleep.lowestRespirationValue", "sleep.dailySleepDTO.lowestRespirationValue"),
+            "maximum_respiration": number("sleep.highestRespirationValue", "sleep.dailySleepDTO.highestRespirationValue"),
+            "sleep_need_minutes": number("sleep.sleepNeed.actual", "sleep.dailySleepDTO.sleepNeed.actual"),
+        },
+        "hrv": {
+            **base,
+            "status": string("hrv.hrvSummary.status"),
+            "weekly_average_ms": number("hrv.hrvSummary.weeklyAvg"),
+            "last_night_average_ms": number("hrv.hrvSummary.lastNightAvg"),
+            "last_night_5min_high_ms": number("hrv.hrvSummary.lastNight5MinHigh"),
+            "baseline_low_upper_ms": number("hrv.hrvSummary.baseline.lowUpper"),
+            "baseline_balanced_low_ms": number("hrv.hrvSummary.baseline.balancedLow"),
+            "baseline_balanced_upper_ms": number("hrv.hrvSummary.baseline.balancedUpper"),
+            "baseline_marker": number("hrv.hrvSummary.baseline.markerValue"),
+        },
+        "energy": {
+            **base,
+            "body_battery_min": number("stats.data[].bodyBattery.minValue", "stats[].bodyBattery.minValue"),
+            "body_battery_max": number("stats.data[].bodyBattery.maxValue", "stats[].bodyBattery.maxValue"),
+            "body_battery_charged": number("stats.data[].bodyBattery.chargedValue", "stats[].bodyBattery.chargedValue"),
+            "body_battery_drained": number("stats.data[].bodyBattery.drainedValue", "stats[].bodyBattery.drainedValue"),
+            "body_battery_latest": number("stats.data[].bodyBattery.latestValue", "stats[].bodyBattery.latestValue"),
+            "resting_calories": number("stats.data[].calories.burnedResting", "stats[].calories.burnedResting"),
+            "active_calories": number("stats.data[].calories.burnedActive", "stats[].calories.burnedActive"),
+            "total_calories": number("stats.data[].calories.burnedTotal", "stats[].calories.burnedTotal"),
+            "steps": number("stats.data[].movement.steps.value", "stats[].movement.steps.value"),
+            "floors_ascended": number("stats.data[].movement.floorsAscended.value", "stats[].movement.floorsAscended.value"),
+            "floors_descended": number("stats.data[].movement.floorsDescended.value", "stats[].movement.floorsDescended.value"),
+            "moderate_intensity_minutes": number("stats.data[].intensityMinutes.moderate", "stats[].intensityMinutes.moderate"),
+            "vigorous_intensity_minutes": number("stats.data[].intensityMinutes.vigorous", "stats[].intensityMinutes.vigorous"),
+        },
+        "vitals": {
+            **base,
+            "heart_rate_min": number("stats.data[].heartRate.minValue", "stats[].heartRate.minValue"),
+            "heart_rate_max": number("stats.data[].heartRate.maxValue", "stats[].heartRate.maxValue"),
+            "heart_rate_resting": number("stats.data[].heartRate.restingValue", "stats[].heartRate.restingValue"),
+            "stress_average": number("stats.data[].stress.avgLevel", "stats[].stress.avgLevel"),
+            "stress_maximum": number("stats.data[].stress.maxLevel", "stats[].stress.maxLevel"),
+            "respiration_average": number("stats.data[].respiration.avgValue", "stats[].respiration.avgValue"),
+            "respiration_minimum": number("stats.data[].respiration.minValue", "stats[].respiration.minValue"),
+            "respiration_maximum": number("stats.data[].respiration.maxValue", "stats[].respiration.maxValue"),
+            "respiration_latest": number("stats.data[].respiration.latestValue", "stats[].respiration.latestValue"),
+            "pulse_ox_average": number("stats.data[].pulseOx.avgValue", "stats[].pulseOx.avgValue"),
+            "pulse_ox_minimum": number("stats.data[].pulseOx.minValue", "stats[].pulseOx.minValue"),
+            "pulse_ox_latest": number("stats.data[].pulseOx.latestValue", "stats[].pulseOx.latestValue"),
+        },
+        "readiness": {
+            **base,
+            "score": number("training_readiness[].score"),
+            "level": string("training_readiness[].level"),
+            "sleep_score_factor_percent": number("training_readiness[].sleepScoreFactorPercent"),
+            "recovery_time_factor_percent": number("training_readiness[].recoveryTimeFactorPercent"),
+            "hrv_factor_percent": number("training_readiness[].hrvFactorPercent"),
+            "acute_load_factor_percent": number("training_readiness[].acuteLoadFactorPercent"),
+            "stress_history_factor_percent": number("training_readiness[].stressHistoryFactorPercent"),
+            "sleep_history_factor_percent": number("training_readiness[].sleepHistoryFactorPercent"),
+            "feedback_short": string("training_readiness[].feedbackShort"),
+        },
+    }
+
+
 def normalize_day(raw: dict[str, Any]) -> dict[str, Any]:
     stats = unwrap(raw["stats"])
     sleep = unwrap(raw["sleep"])
@@ -356,13 +466,16 @@ def normalize_day(raw: dict[str, Any]) -> dict[str, Any]:
         sleep_seconds = deep_find_number(sleep, {"sleeptimeseconds", "sleepdurationseconds"})
     sleep_minutes = round(sleep_seconds / 60) if isinstance(sleep_seconds, (int, float)) else None
     recovery_time = first_number(mapped_payload, FIELD_MAPPINGS["recovery_time_hours"])
-    recovery_time_hours = round(recovery_time / 3600, 2) if isinstance(recovery_time, (int, float)) else None
+    recovery_time_hours = round(recovery_time / 60, 2) if isinstance(recovery_time, (int, float)) else None
     if recovery_time_hours is None:
         recovery_time_hours = deep_find_number(stats, {"recoverytimehours"})
 
+    field_sources = raw.get("field_sources") or {}
+    source_tool = source_tool_for_day(raw)
     return {
         "provider": "garmin",
-        "source_tool": "python-garminconnect",
+        "source_tool": source_tool,
+        "field_sources": field_sources,
         "metric_date": raw["date"],
         "sleep_score": first_number(mapped_payload, FIELD_MAPPINGS["sleep_score"])
         or deep_find_number(sleep, {"overallscore", "sleepscore", "score"}),
@@ -371,7 +484,7 @@ def normalize_day(raw: dict[str, Any]) -> dict[str, Any]:
         or deep_find_string(hrv, {"hrvstatus", "status"}),
         "resting_heart_rate": first_number(mapped_payload, FIELD_MAPPINGS["resting_heart_rate"])
         or deep_find_number(stats, {"restingheartrate", "restinghr"}),
-        "body_battery": first_number(mapped_payload, FIELD_MAPPINGS["body_battery"][:1])
+        "body_battery": first_number(mapped_payload, FIELD_MAPPINGS["body_battery"][:3])
         or body_battery_last_value(body_battery)
         or deep_find_number(body_battery, {"bodybattery", "charged", "level"}),
         "stress_score": first_number(mapped_payload, FIELD_MAPPINGS["stress_score"])
@@ -466,24 +579,66 @@ def build_mapping_coverage(normalized: list[dict[str, Any]]) -> dict[str, Any]:
 
 def main() -> int:
     args = parse_args()
-    client = login(args.email, args.password, args.tokenstore)
+    client = login_read(
+        args.email,
+        args.password,
+        args.tokenstore,
+        provider=args.read_provider,
+        personal_api_key_file=args.personal_api_key_file,
+    )
     raw_days = [fetch_day(client, day) for day in date_range(args.end_date, args.days)]
+    readiness_fallback_count = 0
+    tokenstore = Path(args.tokenstore).expanduser()
+    if (
+        client_source_tool(client) == "garmin-connect-personal-api-python"
+        and any(not day["training_readiness"].get("ok") for day in raw_days)
+        and has_tokens(tokenstore)
+    ):
+        try:
+            legacy_client = login(args.email, args.password, tokenstore)
+            readiness_fallback_count = fill_training_readiness_from_legacy(
+                raw_days, legacy_client
+            )
+        except Exception:
+            readiness_fallback_count = 0
     normalized = [normalize_day(day) for day in raw_days]
+    health_details = [normalize_health_details(day) for day in raw_days]
 
     NORMALIZED_DIR.mkdir(parents=True, exist_ok=True)
     write_json(NORMALIZED_DIR / "daily_recovery_metrics.json", normalized)
+    write_json(DAILY_HEALTH_DETAILS_PATH, health_details)
     write_json(NORMALIZED_DIR / "raw_schema_summary.json", build_schema_summary(raw_days))
     write_json(NORMALIZED_DIR / "mapping_coverage.json", build_mapping_coverage(normalized))
+    write_json(NORMALIZED_DIR / "provider_capabilities.json", provider_metadata(client))
 
     if args.include_raw:
         write_json(RAW_DIR / f"daily_raw_{args.end_date}_{args.days}d.json", raw_days)
 
+    if args.write_db:
+        try:
+            from scripts import trainingos_db
+        except ImportError:
+            import trainingos_db  # type: ignore
+
+        trainingos_db.init_db(Path(args.db))
+        with trainingos_db.connect(Path(args.db)) as connection:
+            for metric, detail_by_category in zip(normalized, health_details):
+                metric["raw_payload_path"] = str(NORMALIZED_DIR / "daily_recovery_metrics.json")
+                trainingos_db.upsert_daily_recovery_metric(connection, metric)
+                for category, detail in detail_by_category.items():
+                    trainingos_db.upsert_daily_health_metric(connection, category, detail)
+
     print(f"Wrote {len(normalized)} normalized Garmin daily records.")
     print(f"Output: {NORMALIZED_DIR / 'daily_recovery_metrics.json'}")
+    print(f"Health details: {DAILY_HEALTH_DETAILS_PATH}")
     print(f"Schema summary: {NORMALIZED_DIR / 'raw_schema_summary.json'}")
     print(f"Mapping coverage: {NORMALIZED_DIR / 'mapping_coverage.json'}")
+    print(f"Provider capabilities: {NORMALIZED_DIR / 'provider_capabilities.json'}")
+    print(f"Legacy training-readiness fallback records: {readiness_fallback_count}")
     if args.include_raw:
         print(f"Raw output: {RAW_DIR}")
+    if args.write_db:
+        print(f"SQLite upsert: {args.db}")
     return 0
 
 

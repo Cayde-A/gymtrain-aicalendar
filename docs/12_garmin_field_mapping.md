@@ -25,16 +25,33 @@ training_readiness[].score
 
 | TrainingOS Field | Garmin Source Path |
 |---|---|
-| `sleep_score` | `sleep.dailySleepDTO.sleepScores.overall.value` |
-| `sleep_duration_minutes` | `sleep.dailySleepDTO.sleepTimeSeconds` converted to minutes |
+| `sleep_score` | `sleep.dailySleepDTO.sleepScores.overall.value`, `sleep.sleepScores.overall.value` |
+| `sleep_duration_minutes` | `sleep.dailySleepDTO.sleepTimeSeconds`, `sleep.sleepTimeSeconds` converted to minutes |
 | `hrv_status` | `hrv.hrvSummary.status` |
-| `resting_heart_rate` | `stats.restingHeartRate` |
-| `body_battery` | `stats.bodyBatteryMostRecentValue`, fallback to `body_battery[].bodyBatteryValuesArray[][]` |
-| `stress_score` | `stats.averageStressLevel` |
+| `resting_heart_rate` | `stats.restingHeartRate`, `stats.data[].heartRate.restingValue`, `stats[].heartRate.restingValue` |
+| `body_battery` | `stats.bodyBatteryMostRecentValue`, `stats.data[].bodyBattery.latestValue`, `stats[].bodyBattery.latestValue`, fallback to `body_battery[].bodyBatteryValuesArray[][]` |
+| `stress_score` | `stats.averageStressLevel`, `stats.data[].stress.avgLevel`, `stats[].stress.avgLevel` |
 | `training_readiness` | `training_readiness[].score` |
-| `recovery_time_hours` | `training_readiness[].recoveryTime` converted to hours |
-| `steps` | `stats.totalSteps` |
-| `calories` | `stats.totalKilocalories` |
+| `recovery_time_hours` | `training_readiness[].recoveryTime` in minutes, divided by 60 |
+| `steps` | `stats.totalSteps`, `stats.data[].movement.steps.value`, `stats[].movement.steps.value` |
+| `calories` | `stats.totalKilocalories`, `stats.data[].calories.burnedTotal`, `stats[].calories.burnedTotal` |
+
+## Categorized Detail Mapping
+
+The importer also writes five category records per date. These records support
+visualization and analysis while the compact recovery mapping above remains
+stable.
+
+| Category | TrainingOS fields | Garmin source groups |
+|---|---|---|
+| Sleep | deep/light/REM/awake/nap minutes, sleep stress/HR, SpO2, respiration, sleep need | `sleep.*`, `sleep.dailySleepDTO.*` |
+| HRV | status, weekly average, last-night average/high, baseline bounds | `hrv.hrvSummary.*` |
+| Energy | Body Battery min/max/charge/drain/latest, calories, steps, floors, intensity minutes | `stats.data[].bodyBattery`, `calories`, `movement`, `intensityMinutes` |
+| Vitals | heart-rate range/resting, stress, respiration, pulse ox | `stats.data[].heartRate`, `stress`, `respiration`, `pulseOx` |
+| Readiness | score, level, factor percentages, feedback | `training_readiness[]` |
+
+Seconds-based sleep fields are converted to minutes. Missing provider values
+remain null and are not inferred.
 
 ## Current Completed Activity Mapping
 
@@ -97,6 +114,7 @@ The importer writes:
 
 ```text
 exports/garmin/normalized/daily_recovery_metrics.json
+exports/garmin/normalized/daily_health_details.json
 exports/garmin/normalized/raw_schema_summary.json
 exports/garmin/normalized/mapping_coverage.json
 ```
@@ -122,3 +140,19 @@ Check mapping_coverage.json
 -> Update SET_FIELD_MAPPINGS or ACTIVITY_FIELD_MAPPINGS in scripts/garmin_activity_import.py
 -> Keep normalized output shape stable
 ```
+
+## Workout Cue Mapping
+
+TrainingOS may attach local movement cues to generated Garmin workout steps.
+
+Mapping:
+
+| TrainingOS Field | Garmin Workout Field | Rule |
+|---|---|---|
+| `exerciseName` | `exerciseName` | Garmin exercise identifier |
+| `category` | `category` | Garmin exercise category |
+| `movement_cue` | `description` | TrainingOS-owned short text cue |
+
+Do not copy Garmin animated workout text, images, or videos into TrainingOS.
+
+If Garmin does not display the step description on a specific watch, keep the cue visible in TrainingOS Web/App/Shortcut and still push the structured workout normally.

@@ -77,12 +77,16 @@ Garmin should execute and record workouts, but TrainingOS should generate the pl
 
 Initial Garmin ingestion should combine reusable open-source tools behind a provider boundary:
 
-- `python-garminconnect` as the primary API wrapper;
-- `GarminDB` as local database and schema reference;
-- `garmin-data-export` as the LLM-friendly full/incremental export bridge;
-- `garmin-connect-export` as an activity CSV/GPX/TCX fallback.
+- `python-garminconnect` as the current API wrapper;
+- `gccli` as the next scheduled-job adapter candidate after parity testing;
+- `garmin_mcp` as an independent interactive debug path;
+- `garmin-data-export` as a historical backfill and failure fallback;
+- GarminDB and `garmin-connect-export` as references or secondary cross-checks.
+
+These tools should not all run on every sync. They provide interchangeable transports and fallbacks behind one TrainingOS boundary. TrainingOS remains responsible for normalization, quality gates, deduplication, and domain writes.
 
 See [Garmin Provider Strategy](08_garmin_provider_strategy.md).
+See [Reuse Integration and TrainingOS-Owned Core](17_reuse_integration_and_self_built_core.md) for the complete ownership boundary.
 
 ### Mobile/Web Logging App
 

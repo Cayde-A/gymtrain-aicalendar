@@ -57,6 +57,64 @@ REP_MAX_PR_TYPES = {
     "8rm": 8,
 }
 DERIVED_PR_TYPES = {"estimated_1rm", "volume_pr"}
+BODY_METRIC_RANGES = {
+    "body_weight_kg": (20.0, 400.0),
+    "body_fat_percent": (2.0, 75.0),
+    "waist_cm": (30.0, 250.0),
+    "chest_cm": (30.0, 250.0),
+    "hip_cm": (30.0, 250.0),
+    "arm_cm": (10.0, 100.0),
+    "leg_cm": (15.0, 150.0),
+}
+DAILY_HEALTH_DETAIL_FIELDS = {
+    "sleep": (
+        "daily_sleep_metrics",
+        (
+            "deep_sleep_minutes", "light_sleep_minutes", "rem_sleep_minutes",
+            "awake_minutes", "nap_minutes", "average_sleep_stress",
+            "average_sleep_heart_rate", "average_spo2", "minimum_spo2",
+            "maximum_spo2", "average_respiration", "minimum_respiration",
+            "maximum_respiration", "sleep_need_minutes",
+        ),
+    ),
+    "hrv": (
+        "daily_hrv_metrics",
+        (
+            "status", "weekly_average_ms", "last_night_average_ms",
+            "last_night_5min_high_ms", "baseline_low_upper_ms",
+            "baseline_balanced_low_ms", "baseline_balanced_upper_ms",
+            "baseline_marker",
+        ),
+    ),
+    "energy": (
+        "daily_energy_metrics",
+        (
+            "body_battery_min", "body_battery_max", "body_battery_charged",
+            "body_battery_drained", "body_battery_latest", "resting_calories",
+            "active_calories", "total_calories", "steps", "floors_ascended",
+            "floors_descended", "moderate_intensity_minutes",
+            "vigorous_intensity_minutes",
+        ),
+    ),
+    "vitals": (
+        "daily_vitals_metrics",
+        (
+            "heart_rate_min", "heart_rate_max", "heart_rate_resting",
+            "stress_average", "stress_maximum", "respiration_average",
+            "respiration_minimum", "respiration_maximum", "respiration_latest",
+            "pulse_ox_average", "pulse_ox_minimum", "pulse_ox_latest",
+        ),
+    ),
+    "readiness": (
+        "daily_readiness_metrics",
+        (
+            "score", "level", "sleep_score_factor_percent",
+            "recovery_time_factor_percent", "hrv_factor_percent",
+            "acute_load_factor_percent", "stress_history_factor_percent",
+            "sleep_history_factor_percent", "feedback_short",
+        ),
+    ),
+}
 
 try:
     from . import trainingos_observability
@@ -75,11 +133,50 @@ def connect(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
 def init_db(db_path: Path = DEFAULT_DB_PATH) -> None:
     with connect(db_path) as connection:
         connection.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+        ensure_schema_migrations(connection)
         ensure_default_athlete(connection)
     trainingos_observability.record_event(
         "local_db_initialized",
         details={"db_path": str(db_path)},
     )
+
+
+def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
+    columns = {
+        str(row["name"])
+        for row in connection.execute("pragma table_info(exercise_catalog)").fetchall()
+    }
+    additions = {
+        "garmin_category": "text",
+        "garmin_exercise_name": "text",
+        "venue_availability_status": "text not null default 'unknown'",
+        "verification_level": "text not null default 'unverified'",
+        "verification_source": "text",
+        "last_verified_on": "text",
+    }
+    for name, declaration in additions.items():
+        if name not in columns:
+            connection.execute(f"alter table exercise_catalog add column {name} {declaration}")
+    connection.execute(
+        """
+        create unique index if not exists exercise_catalog_garmin_pair_idx
+        on exercise_catalog (garmin_category, garmin_exercise_name)
+        where garmin_category is not null and garmin_exercise_name is not null
+        """
+    )
+    for table in ("completed_sessions", "daily_recovery_metrics"):
+        table_columns = {
+            str(row["name"])
+            for row in connection.execute(f"pragma table_info({table})").fetchall()
+        }
+        if "source_tool" not in table_columns:
+            connection.execute(f"alter table {table} add column source_tool text")
+    hrv_columns = {
+        str(row["name"])
+        for row in connection.execute("pragma table_info(daily_hrv_metrics)").fetchall()
+    }
+    if "baseline_marker" not in hrv_columns:
+        connection.execute("alter table daily_hrv_metrics add column baseline_marker real")
 
 
 def ensure_default_athlete(connection: sqlite3.Connection) -> str:
@@ -376,6 +473,122 @@ def get_or_create_exercise(
     return exercise_id
 
 
+def upsert_daily_recovery_metric(
+    connection: sqlite3.Connection,
+    metric: dict[str, Any],
+    athlete_id: str = DEFAULT_ATHLETE_ID,
+) -> str:
+    ensure_default_athlete(connection)
+    metric_id = new_id("recovery")
+    provider = str(metric.get("provider") or "garmin")
+    metric_date = str(metric["metric_date"])
+    raw_payload_path = metric.get("raw_payload_path")
+    connection.execute(
+        """
+        insert into daily_recovery_metrics (
+          id, athlete_id, metric_date, provider, source_tool, sleep_score,
+          sleep_duration_minutes, hrv_status, resting_heart_rate, body_battery,
+          stress_score, training_readiness, recovery_time_hours, steps,
+          calories, raw_payload_path
+        )
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        on conflict(athlete_id, metric_date, provider) do update set
+          source_tool = coalesce(excluded.source_tool, daily_recovery_metrics.source_tool),
+          sleep_score = excluded.sleep_score,
+          sleep_duration_minutes = excluded.sleep_duration_minutes,
+          hrv_status = excluded.hrv_status,
+          resting_heart_rate = excluded.resting_heart_rate,
+          body_battery = excluded.body_battery,
+          stress_score = excluded.stress_score,
+          training_readiness = excluded.training_readiness,
+          recovery_time_hours = excluded.recovery_time_hours,
+          steps = excluded.steps,
+          calories = excluded.calories,
+          raw_payload_path = excluded.raw_payload_path
+        """,
+        (
+            metric_id,
+            athlete_id,
+            metric_date,
+            provider,
+            metric.get("source_tool"),
+            metric.get("sleep_score"),
+            metric.get("sleep_duration_minutes"),
+            metric.get("hrv_status"),
+            metric.get("resting_heart_rate"),
+            metric.get("body_battery"),
+            metric.get("stress_score"),
+            metric.get("training_readiness"),
+            metric.get("recovery_time_hours"),
+            metric.get("steps"),
+            metric.get("calories"),
+            raw_payload_path,
+        ),
+    )
+    row = connection.execute(
+        """
+        select id
+        from daily_recovery_metrics
+        where athlete_id = ? and metric_date = ? and provider = ?
+        """,
+        (athlete_id, metric_date, provider),
+    ).fetchone()
+    saved_id = str(row["id"])
+    trainingos_observability.record_event(
+        "daily_recovery_metric_upserted",
+        details={
+            "metric_date": metric_date,
+            "provider": provider,
+            "has_sleep_score": metric.get("sleep_score") is not None,
+            "has_training_readiness": metric.get("training_readiness") is not None,
+        },
+    )
+    return saved_id
+
+
+def upsert_daily_health_metric(
+    connection: sqlite3.Connection,
+    category: str,
+    metric: dict[str, Any],
+    athlete_id: str = DEFAULT_ATHLETE_ID,
+) -> str:
+    """Upsert one allowlisted category of detailed daily health data."""
+    if category not in DAILY_HEALTH_DETAIL_FIELDS:
+        raise ValueError(f"unsupported daily health category: {category}")
+    ensure_default_athlete(connection)
+    table, fields = DAILY_HEALTH_DETAIL_FIELDS[category]
+    provider = str(metric.get("provider") or "garmin")
+    metric_date = str(metric["metric_date"])
+    metric_id = new_id(f"{category}_metric")
+    base_columns = ("id", "athlete_id", "metric_date", "provider", "source_tool")
+    columns = (*base_columns, *fields)
+    values = (
+        metric_id,
+        athlete_id,
+        metric_date,
+        provider,
+        metric.get("source_tool"),
+        *(metric.get(field) for field in fields),
+    )
+    assignments = ", ".join(
+        f"{field} = excluded.{field}" for field in ("source_tool", *fields)
+    )
+    placeholders = ", ".join("?" for _ in columns)
+    connection.execute(
+        f"""
+        insert into {table} ({', '.join(columns)})
+        values ({placeholders})
+        on conflict(athlete_id, metric_date, provider) do update set {assignments}
+        """,
+        values,
+    )
+    row = connection.execute(
+        f"select id from {table} where athlete_id = ? and metric_date = ? and provider = ?",
+        (athlete_id, metric_date, provider),
+    ).fetchone()
+    return str(row["id"])
+
+
 def upsert_completed_session(
     connection: sqlite3.Connection,
     session: dict[str, Any],
@@ -398,6 +611,7 @@ def upsert_completed_session(
         "id": session_id,
         "athlete_id": athlete_id,
         "provider": provider,
+        "source_tool": session.get("source_tool"),
         "external_activity_id": external_activity_id or None,
         "started_at": session.get("started_at"),
         "completed_at": session.get("completed_at") or session.get("started_at"),
@@ -416,18 +630,19 @@ def upsert_completed_session(
     connection.execute(
         """
         insert into completed_sessions (
-          id, athlete_id, provider, external_activity_id, started_at, completed_at,
+          id, athlete_id, provider, source_tool, external_activity_id, started_at, completed_at,
           session_type, activity_name, duration_seconds, average_heart_rate,
           max_heart_rate, calories, raw_payload_path, readiness_notes,
           fatigue_rating, pain_notes, overall_rpe
         )
         values (
-          :id, :athlete_id, :provider, :external_activity_id, :started_at, :completed_at,
+          :id, :athlete_id, :provider, :source_tool, :external_activity_id, :started_at, :completed_at,
           :session_type, :activity_name, :duration_seconds, :average_heart_rate,
           :max_heart_rate, :calories, :raw_payload_path, :readiness_notes,
           :fatigue_rating, :pain_notes, :overall_rpe
         )
         on conflict(id) do update set
+          source_tool = coalesce(excluded.source_tool, completed_sessions.source_tool),
           started_at = excluded.started_at,
           completed_at = excluded.completed_at,
           session_type = excluded.session_type,
@@ -1015,6 +1230,116 @@ def aggregate_day_metrics(sessions: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def upsert_body_metric(
+    connection: sqlite3.Connection,
+    payload: dict[str, Any],
+    athlete_id: str = DEFAULT_ATHLETE_ID,
+) -> str:
+    metric_date = str(payload.get("metric_date") or "").strip()
+    if len(metric_date) != 10:
+        raise ValueError("metric_date must use YYYY-MM-DD format")
+    values: dict[str, float | None] = {}
+    for field_name, (minimum, maximum) in BODY_METRIC_RANGES.items():
+        raw_value = payload.get(field_name)
+        value = None if raw_value in {None, ""} else float(raw_value)
+        if value is not None and not minimum <= value <= maximum:
+            raise ValueError(f"{field_name} must be between {minimum:g} and {maximum:g}")
+        values[field_name] = value
+    if not any(value is not None for value in values.values()):
+        raise ValueError("at least one body metric value is required")
+
+    row = connection.execute(
+        "select id from body_metrics where athlete_id = ? and metric_date = ? order by created_at limit 1",
+        (athlete_id, metric_date),
+    ).fetchone()
+    metric_id = str(row["id"]) if row else new_id("body_metric")
+    if row:
+        connection.execute(
+            """
+            update body_metrics
+            set body_weight_kg = ?, body_fat_percent = ?, waist_cm = ?, chest_cm = ?,
+                hip_cm = ?, arm_cm = ?, leg_cm = ?, notes = ?
+            where id = ?
+            """,
+            (
+                values["body_weight_kg"], values["body_fat_percent"], values["waist_cm"],
+                values["chest_cm"], values["hip_cm"], values["arm_cm"], values["leg_cm"],
+                str(payload.get("notes") or "").strip() or None, metric_id,
+            ),
+        )
+    else:
+        connection.execute(
+            """
+            insert into body_metrics (
+              id, athlete_id, metric_date, body_weight_kg, body_fat_percent,
+              waist_cm, chest_cm, hip_cm, arm_cm, leg_cm, notes
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                metric_id, athlete_id, metric_date, values["body_weight_kg"],
+                values["body_fat_percent"], values["waist_cm"], values["chest_cm"],
+                values["hip_cm"], values["arm_cm"], values["leg_cm"],
+                str(payload.get("notes") or "").strip() or None,
+            ),
+        )
+    trainingos_observability.record_event(
+        "body_metric_saved",
+        details={
+            "metric_date": metric_date,
+            "populated_field_count": sum(value is not None for value in values.values()),
+        },
+    )
+    return metric_id
+
+
+def get_recent_body_metrics(
+    connection: sqlite3.Connection,
+    limit: int = 30,
+    on_or_before: str | None = None,
+    athlete_id: str = DEFAULT_ATHLETE_ID,
+) -> list[dict[str, Any]]:
+    where_date = " and metric_date <= ?" if on_or_before else ""
+    params: list[Any] = [athlete_id]
+    if on_or_before:
+        params.append(on_or_before)
+    params.append(max(1, min(int(limit), 365)))
+    rows = connection.execute(
+        f"""
+        select * from body_metrics
+        where athlete_id = ?{where_date}
+        order by metric_date desc, created_at desc
+        limit ?
+        """,
+        params,
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def body_metrics_context(
+    connection: sqlite3.Connection,
+    on_or_before: str,
+    athlete_id: str = DEFAULT_ATHLETE_ID,
+) -> dict[str, Any]:
+    rows = get_recent_body_metrics(connection, 2, on_or_before, athlete_id)
+    if not rows:
+        return {"status": "unavailable"}
+    latest = rows[0]
+    previous = rows[1] if len(rows) > 1 else None
+    values = {field: latest.get(field) for field in BODY_METRIC_RANGES}
+    deltas = {
+        field: round(float(latest[field]) - float(previous[field]), 2)
+        for field in BODY_METRIC_RANGES
+        if previous and latest.get(field) is not None and previous.get(field) is not None
+    }
+    return {
+        "status": "available",
+        "metric_date": latest["metric_date"],
+        "values": values,
+        "change_from_previous": deltas,
+        "previous_metric_date": previous["metric_date"] if previous else None,
+    }
+
+
 def build_ai_review_packet(connection: sqlite3.Connection, session_id: str) -> dict[str, Any]:
     summary = build_ai_review_summary(connection, session_id)
     trigger_policy = get_ai_trigger_policy(connection)
@@ -1029,6 +1354,12 @@ def build_ai_review_packet(connection: sqlite3.Connection, session_id: str) -> d
             "final_plan_requires_next_day_recovery": True,
             "do_not_push_garmin_workout_from_initial_draft": True,
             "api_calls_require_trigger_policy": True,
+            "one_primary_large_muscle_group_per_session": True,
+            "reduce_adjacent_day_muscle_overlap": True,
+            "after_chest_shoulder_day_prioritize_legs": True,
+            "avoid_back_or_arm_primary_after_chest_shoulder_day": True,
+            "allow_interstitial_core_sessions": True,
+            "core_sessions_must_not_interfere_with_adjacent_primary_days": True,
         },
         "trigger_policy": {
             "post_workout_ai_mode": trigger_policy["post_workout_ai_mode"],
@@ -1045,7 +1376,10 @@ def build_ai_review_packet(connection: sqlite3.Connection, session_id: str) -> d
             "initial_next_day_plan": {
                 "status": "initial_draft",
                 "session_type": "string",
+                "primary_large_muscle_group": "legs|chest|back|shoulders|arms|core|recovery",
+                "interstitial_core": "none|core_between_push_legs|core_between_legs_pull",
                 "focus": ["string"],
+                "avoided_overlap": ["string"],
                 "rounds": [
                     {
                         "exercise": "string",
@@ -1060,6 +1394,7 @@ def build_ai_review_packet(connection: sqlite3.Connection, session_id: str) -> d
         },
         "session": summary["session"],
         "metrics": session_metrics(summary),
+        "body_metrics": body_metrics_context(connection, str(summary["session"]["completed_at"])[:10]),
         "sets": summary["sets"],
     }
     trainingos_observability.record_event(
@@ -1116,6 +1451,12 @@ def build_day_ai_review_packet(connection: sqlite3.Connection, training_date: st
             "final_plan_requires_next_day_recovery": True,
             "do_not_push_garmin_workout_from_initial_draft": True,
             "api_calls_require_trigger_policy": True,
+            "one_primary_large_muscle_group_per_session": True,
+            "reduce_adjacent_day_muscle_overlap": True,
+            "after_chest_shoulder_day_prioritize_legs": True,
+            "avoid_back_or_arm_primary_after_chest_shoulder_day": True,
+            "allow_interstitial_core_sessions": True,
+            "core_sessions_must_not_interfere_with_adjacent_primary_days": True,
         },
         "trigger_policy": {
             "post_workout_ai_mode": trigger_policy["post_workout_ai_mode"],
@@ -1132,7 +1473,10 @@ def build_day_ai_review_packet(connection: sqlite3.Connection, training_date: st
             "initial_next_day_plan": {
                 "status": "initial_draft",
                 "session_type": "string",
+                "primary_large_muscle_group": "legs|chest|back|shoulders|arms|core|recovery",
+                "interstitial_core": "none|core_between_push_legs|core_between_legs_pull",
                 "focus": ["string"],
+                "avoided_overlap": ["string"],
                 "rounds": [
                     {
                         "exercise": "string",
@@ -1146,6 +1490,7 @@ def build_day_ai_review_packet(connection: sqlite3.Connection, training_date: st
             "next_morning_adjustment_rules": ["string"],
         },
         "metrics": aggregate_day_metrics(sessions),
+        "body_metrics": body_metrics_context(connection, training_date),
         "sessions": packet_sessions,
     }
     trainingos_observability.record_event(
@@ -1167,6 +1512,11 @@ Rules:
 - Keep reasoning compact.
 - Return JSON only.
 - Generate an initial next-day plan draft.
+- Design the draft around one primary large muscle group.
+- Reduce adjacent-day muscle overlap.
+- If the completed workout focused on chest/shoulders, prioritize legs next and avoid back or arms as the primary next-day focus.
+- Medium/high-intensity core can be inserted between chest, legs, and pull days only when it does not impair adjacent primary sessions.
+- Avoid hanging or grip-heavy core before pull day; avoid heavy hip-flexor or maximal bracing core before leg day.
 - Do not mark the draft as final.
 - The final plan must wait for next-day Garmin sleep, HRV, Body Battery, readiness, and recovery metrics.
 
@@ -1191,6 +1541,11 @@ Rules:
 - Keep reasoning compact.
 - Return JSON only.
 - Generate an initial next-day plan draft.
+- Design the draft around one primary large muscle group.
+- Reduce adjacent-day muscle overlap.
+- If the completed workout focused on chest/shoulders, prioritize legs next and avoid back or arms as the primary next-day focus.
+- Medium/high-intensity core can be inserted between chest, legs, and pull days only when it does not impair adjacent primary sessions.
+- Avoid hanging or grip-heavy core before pull day; avoid heavy hip-flexor or maximal bracing core before leg day.
 - Do not mark the draft as final.
 - The final plan must wait for next-day Garmin sleep, HRV, Body Battery, readiness, and recovery metrics.
 

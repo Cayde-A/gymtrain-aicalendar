@@ -88,6 +88,8 @@ http://127.0.0.1:8787/settings
 
 The AI review packet includes the active `trigger_policy` so each analysis can be audited later.
 
-Current implementation still uses the manual copy/paste path. The policy is a guardrail for the next API integration step.
+AI review still defaults to the manual copy/paste path. An optional Responses API adapter now supports `user_confirmed_api`, strict structured output, `store: false`, daily-cap enforcement, and reuse of an existing valid review. It never runs under the default manual policy and never treats its initial draft as a final plan. See [Structured AI Review Adapter](36_structured_ai_adapter.md).
 
-The settings page also provides trigger checks. These checks record local gate decisions but do not call external APIs.
+The daily pipeline can consume the saved structured response, apply deterministic recovery and overlap rules, and generate a final Garmin payload.
+
+The settings page provides standalone trigger checks. The daily pipeline uses the same gate before a Garmin write. Under the default `user_confirmed` mode, `--push --confirm-push` is required; denied decisions do not execute the Garmin command.

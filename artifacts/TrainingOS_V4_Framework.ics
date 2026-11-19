@@ -1,0 +1,151 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//TrainingOS//V4 Dynamic Framework//EN
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
+X-WR-CALNAME:TrainingOS V4 Dynamic Framework
+X-WR-TIMEZONE:Australia/Sydney
+BEGIN:VTIMEZONE
+TZID:Australia/Sydney
+BEGIN:DAYLIGHT
+TZOFFSETFROM:+1000
+TZOFFSETTO:+1100
+TZNAME:AEDT
+DTSTART:19701004T020000
+RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=1SU
+END:DAYLIGHT
+BEGIN:STANDARD
+TZOFFSETFROM:+1100
+TZOFFSETTO:+1000
+TZNAME:AEST
+DTSTART:19700405T030000
+RRULE:FREQ=YEARLY;BYMONTH=4;BYDAY=1SU
+END:STANDARD
+END:VTIMEZONE
+BEGIN:VEVENT
+UID:trainingos-v4-push_chest-2026-10-05@trainingos.local
+DTSTAMP:20261005T000000Z
+DTSTART;TZID=Australia/Sydney:20261005T110000
+DTEND;TZID=Australia/Sydney:20261005T123000
+RRULE:FREQ=DAILY;INTERVAL=6;COUNT=8
+SUMMARY:TrainingOS V4 - Push / Chest
+LOCATION:Gunyama Park Aquatic and Recreation Centre
+DESCRIPTION:Primary target: Chest\nOverlap rule: Keep shoulder and triceps 
+ accessory volume limited.\nFocus: PR-aware chest work\; load and set count
+  finalized from morning recovery.\nMorning inputs: sleep\, HRV\, Body Batt
+ ery\, readiness\, recent PR state.\nLoad: dynamic\; do not copy a fixed we
+ ight from the calendar.\nRecord: sets\, reps\, weight\, RPE\, pain\, and t
+ echnique notes in Garmin/TrainingOS.\nFallback: If recovery is poor: reduc
+ e volume or use technique work\; do not force a PR.
+BEGIN:VALARM
+TRIGGER:-PT45M
+ACTION:DISPLAY
+DESCRIPTION:TrainingOS V4 - Push / Chest
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:trainingos-v4-core_a-2026-10-05@trainingos.local
+DTSTAMP:20261005T000000Z
+DTSTART;TZID=Australia/Sydney:20261006T110000
+DTEND;TZID=Australia/Sydney:20261006T120000
+RRULE:FREQ=DAILY;INTERVAL=6;COUNT=8
+SUMMARY:TrainingOS V4 - Core A
+LOCATION:Gunyama Park Aquatic and Recreation Centre
+DESCRIPTION:Primary target: Core\nOverlap rule: Avoid grip-heavy\, hanging\
+ , and high-volume hip-flexor work before legs.\nFocus: Medium/high-intensi
+ ty trunk flexion and anti-extension with controlled fatigue.\nMorning inpu
+ ts: sleep\, HRV\, Body Battery\, readiness\, recent PR state.\nLoad: dynam
+ ic\; do not copy a fixed weight from the calendar.\nRecord: sets\, reps\, 
+ weight\, RPE\, pain\, and technique notes in Garmin/TrainingOS.\nFallback:
+  If bracing is fatigued: use low-load control work or recovery only.
+BEGIN:VALARM
+TRIGGER:-PT45M
+ACTION:DISPLAY
+DESCRIPTION:TrainingOS V4 - Core A
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:trainingos-v4-legs-2026-10-05@trainingos.local
+DTSTAMP:20261005T000000Z
+DTSTART;TZID=Australia/Sydney:20261007T110000
+DTEND;TZID=Australia/Sydney:20261007T123000
+RRULE:FREQ=DAILY;INTERVAL=6;COUNT=8
+SUMMARY:TrainingOS V4 - Legs
+LOCATION:Gunyama Park Aquatic and Recreation Centre
+DESCRIPTION:Primary target: Legs\nOverlap rule: No upper-body loading\; pro
+ tect the prior pressing chain.\nFocus: One lower-body priority with PR-awa
+ re progression and an RPE cap.\nMorning inputs: sleep\, HRV\, Body Battery
+ \, readiness\, recent PR state.\nLoad: dynamic\; do not copy a fixed weigh
+ t from the calendar.\nRecord: sets\, reps\, weight\, RPE\, pain\, and tech
+ nique notes in Garmin/TrainingOS.\nFallback: If recovery is poor: remove o
+ ne accessory block and cap all work at RPE 7.
+BEGIN:VALARM
+TRIGGER:-PT45M
+ACTION:DISPLAY
+DESCRIPTION:TrainingOS V4 - Legs
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:trainingos-v4-core_b-2026-10-05@trainingos.local
+DTSTAMP:20261005T000000Z
+DTSTART;TZID=Australia/Sydney:20261008T110000
+DTEND;TZID=Australia/Sydney:20261008T120000
+RRULE:FREQ=DAILY;INTERVAL=6;COUNT=8
+SUMMARY:TrainingOS V4 - Core B
+LOCATION:Gunyama Park Aquatic and Recreation Centre
+DESCRIPTION:Primary target: Core\nOverlap rule: Avoid hanging\, grip-heavy\
+ , and lower-back-fatiguing work before pull.\nFocus: Medium/high-intensity
+  trunk work that preserves grip and spinal erectors.\nMorning inputs: slee
+ p\, HRV\, Body Battery\, readiness\, recent PR state.\nLoad: dynamic\; do 
+ not copy a fixed weight from the calendar.\nRecord: sets\, reps\, weight\,
+  RPE\, pain\, and technique notes in Garmin/TrainingOS.\nFallback: If legs
+  or lower back remain fatigued: use supported control work or rest.
+BEGIN:VALARM
+TRIGGER:-PT45M
+ACTION:DISPLAY
+DESCRIPTION:TrainingOS V4 - Core B
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:trainingos-v4-pull_back-2026-10-05@trainingos.local
+DTSTAMP:20261005T000000Z
+DTSTART;TZID=Australia/Sydney:20261009T110000
+DTEND;TZID=Australia/Sydney:20261009T123000
+RRULE:FREQ=DAILY;INTERVAL=6;COUNT=8
+SUMMARY:TrainingOS V4 - Pull / Back
+LOCATION:Gunyama Park Aquatic and Recreation Centre
+DESCRIPTION:Primary target: Back\nOverlap rule: Biceps are secondary\; avoi
+ d turning the session into an arm-priority day.\nFocus: Back-priority vert
+ ical and horizontal pulling with conservative arm volume.\nMorning inputs:
+  sleep\, HRV\, Body Battery\, readiness\, recent PR state.\nLoad: dynamic\
+ ; do not copy a fixed weight from the calendar.\nRecord: sets\, reps\, wei
+ ght\, RPE\, pain\, and technique notes in Garmin/TrainingOS.\nFallback: If
+  recovery is poor: reduce one row/curl block and keep two reps in reserve.
+BEGIN:VALARM
+TRIGGER:-PT45M
+ACTION:DISPLAY
+DESCRIPTION:TrainingOS V4 - Pull / Back
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:trainingos-v4-recovery_sync-2026-10-05@trainingos.local
+DTSTAMP:20261005T000000Z
+DTSTART;TZID=Australia/Sydney:20261010T110000
+DTEND;TZID=Australia/Sydney:20261010T113000
+RRULE:FREQ=DAILY;INTERVAL=6;COUNT=8
+SUMMARY:TrainingOS V4 - Recovery / Sync
+LOCATION:Gunyama Park Aquatic and Recreation Centre
+DESCRIPTION:Primary target: Recovery\nOverlap rule: No primary resistance-t
+ raining target.\nFocus: Sync Garmin data\, correct the prior sessions\, an
+ d review the next cycle.\nMorning inputs: sleep\, HRV\, Body Battery\, rea
+ diness\, recent PR state.\nLoad: dynamic\; do not copy a fixed weight from
+  the calendar.\nRecord: sets\, reps\, weight\, RPE\, pain\, and technique 
+ notes in Garmin/TrainingOS.\nFallback: If data quality is incomplete: keep
+  the next plan as draft and do not auto-push.
+BEGIN:VALARM
+TRIGGER:-PT45M
+ACTION:DISPLAY
+DESCRIPTION:TrainingOS V4 - Recovery / Sync
+END:VALARM
+END:VEVENT
+END:VCALENDAR

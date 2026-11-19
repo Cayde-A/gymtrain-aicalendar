@@ -1,3 +1,1 @@
-git+https://github.com/cyberjunky/python-garminconnect.git
-pydantic>=2,<3
-
+-r requirements.txt

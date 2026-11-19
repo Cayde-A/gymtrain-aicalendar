@@ -2,15 +2,23 @@
 
 ## Decision
 
-TrainingOS will first combine four reusable Garmin open-source paths before building a custom Garmin integration from scratch.
+TrainingOS will reuse Garmin open-source transports behind one provider boundary instead of combining their internal code into one runtime.
 
 The Garmin integration must be wrapped behind a `Garmin Provider` boundary so the rest of TrainingOS depends only on normalized data, not on any single GitHub library or unofficial endpoint.
 
 ## Recommended Stack
 
-### 1. python-garminconnect
+### 1. Garmin Connect Personal API
 
-Role: primary programmatic access layer.
+Role: preferred official read layer for a single user's own data.
+
+Use for daily health metrics, sleep, HRV, Body Battery, activities, activity
+details, and original FIT downloads. It is pull-only and does not provide the
+Training API under Personal access.
+
+### 2. python-garminconnect
+
+Role: compatibility write layer and temporary read fallback.
 
 Use for:
 
@@ -33,7 +41,7 @@ python-garminconnect
 -> Local SQLite tables
 ```
 
-### 2. GarminDB
+### 3. GarminDB
 
 Role: local data warehouse reference and fallback.
 
@@ -52,7 +60,9 @@ GarminDB
 -> adapt useful ideas into TrainingOS schema
 ```
 
-### 3. garmin-data-export
+GarminDB is GPL-licensed and remains a reference unless TrainingOS explicitly accepts the corresponding distribution obligations.
+
+### 4. garmin-data-export
 
 Role: LLM-friendly export and incremental update bridge.
 
@@ -72,7 +82,7 @@ garmin-data-export
 -> daily_recovery_metrics + activity tables
 ```
 
-### 4. garmin-connect-export
+### 5. garmin-connect-export
 
 Role: activity export fallback.
 
@@ -145,17 +155,19 @@ Follow this sequence:
    - preserve normalized output shape;
    - keep schema stable unless the metric model truly changed.
 5. If the original source has no fix, check the other three approved sources.
-6. If all four fail, reassess official Garmin Developer Program or alternative bridge paths.
+6. If all approved read paths fail, reassess provider status and alternative bridge paths.
+
+Before adding another custom endpoint, also evaluate `gccli` for deterministic JSON command execution and `garmin_mcp` for independent interactive diagnosis. Neither tool may bypass TrainingOS normalization or push policy.
 
 ## Source Priority During Failure
 
 Use this priority order:
 
-1. `python-garminconnect` for API-level repair.
-2. `garmin-data-export` for immediate export continuity.
-3. `GarminDB` for local warehouse continuity.
-4. `garmin-connect-export` for activity-level backup continuity.
-5. Official Garmin Developer Program if the project needs production-grade stability.
+1. Garmin Connect Personal API for official read continuity.
+2. `python-garminconnect` for compatibility reads and writes.
+3. `garmin-data-export` for immediate export continuity.
+4. GarminDB for local warehouse continuity.
+5. `garmin-connect-export` for activity-level backup continuity.
 
 ## Security Rules
 
@@ -167,6 +179,16 @@ Use this priority order:
 - Treat Garmin OAuth tokens like passwords.
 - Prefer interactive credential entry during setup.
 
+## Current Implementation
+
+- `scripts/garmin_provider.py` owns shared authentication and token-store selection.
+- Official Personal API reads are selected automatically when a key is configured.
+- Personal API and compatibility write capabilities are reported separately.
+- `scripts/garmin_import.py` normalizes recovery data.
+- `scripts/garmin_activity_import.py` normalizes completed activities and sets.
+- `scripts/garmin_workout_push.py` uploads, schedules, replaces, and pushes final workouts.
+- `scripts/trainingos_db.py` remains the domain persistence and decision boundary.
+
 ## MVP Implementation Path
 
 1. Start with `garmin-data-export` to confirm account access and data availability.
@@ -175,3 +197,5 @@ Use this priority order:
 4. Use GarminDB as a reference if schema or historical import becomes complex.
 5. Normalize into TrainingOS local SQLite tables.
 6. Add failure recheck notes to changelog whenever the provider is updated.
+
+The full reuse and self-build boundary is documented in [Reuse Integration and TrainingOS-Owned Core](17_reuse_integration_and_self_built_core.md).

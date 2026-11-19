@@ -35,6 +35,9 @@ Milestones:
 - V5.6: Add Apple Shortcut for post-workout ChatGPT review.
 - V5.7: Generate morning preset training rounds from Garmin recovery and PR history.
 - V5.8: Add local raw-cache retention and cleanup.
+- V5.9: Consolidate Garmin authentication behind a provider boundary. Completed in MVP.
+- V5.10: Run gccli parity tests for deterministic scheduled import and push.
+- V5.11: Add observable daily pipeline from import through conditional Garmin push. Completed in MVP.
 
 Exit criteria:
 
@@ -60,6 +63,7 @@ Milestones:
 - V6.8: Move next-day training generation to backend automation.
 - V6.9: Export approved planned rounds into Garmin-compatible workout structure if feasible.
 - V6.10: Add monthly minimized Supabase sync and post-sync cache cleanup.
+- V6.11: Add adapter capability reporting, structured provider errors, and fallback selection.
 
 Exit criteria:
 

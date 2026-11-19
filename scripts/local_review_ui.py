@@ -4,20 +4,80 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import html
 import json
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import subprocess
+import sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 try:
-    from . import trainingos_db, trainingos_observability
+    from . import (
+        trainingos_dashboard,
+        trainingos_db,
+        trainingos_observability,
+        trainingos_voice_input,
+    )
 except ImportError:  # pragma: no cover - supports direct script execution.
+    import trainingos_dashboard  # type: ignore
     import trainingos_db  # type: ignore
     import trainingos_observability  # type: ignore
+    import trainingos_voice_input  # type: ignore
 
 
 ROOT = Path(__file__).resolve().parents[1]
+APP_ICON_PATH = ROOT / "artifacts" / "trainingos-app-icon.svg"
+GARMIN_IMPORT_SCRIPT = ROOT / "scripts" / "garmin_import.py"
+PWA_MANIFEST = {
+    "id": "/",
+    "name": "TrainingOS",
+    "short_name": "TrainingOS",
+    "description": "Local-first training review and planning",
+    "start_url": "/",
+    "scope": "/",
+    "display": "standalone",
+    "background_color": "#f8fafc",
+    "theme_color": "#111827",
+    "icons": [
+        {
+            "src": "/app-icon.svg",
+            "sizes": "any",
+            "type": "image/svg+xml",
+            "purpose": "any maskable",
+        }
+    ],
+}
+SERVICE_WORKER = """const CACHE_NAME = 'trainingos-shell-v1';
+const STATIC_ASSETS = ['/offline', '/manifest.webmanifest', '/app-icon.svg'];
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS)));
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then((keys) => Promise.all(
+      keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
+    ))
+  );
+  self.clients.claim();
+});
+
+self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
+  const url = new URL(event.request.url);
+  if (event.request.mode === 'navigate') {
+    event.respondWith(fetch(event.request).catch(() => caches.match('/offline')));
+    return;
+  }
+  if (url.origin === self.location.origin && STATIC_ASSETS.includes(url.pathname)) {
+    event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request)));
+  }
+});
+"""
 
 
 def page(title: str, body: str) -> str:
@@ -26,6 +86,11 @@ def page(title: str, body: str) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111827">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/app-icon.svg" type="image/svg+xml">
   <title>{html.escape(title)}</title>
   <style>
     body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f8fafc; color: #111827; }}
@@ -51,9 +116,39 @@ def page(title: str, body: str) -> str:
     .field {{ background: white; border: 1px solid #d1d5db; border-radius: 8px; padding: 12px; }}
     .field label {{ display: block; color: #6b7280; font-size: 12px; margin-bottom: 6px; }}
     .empty {{ background: white; border: 1px solid #d1d5db; border-radius: 8px; padding: 18px; }}
+    .section-heading {{ display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 26px; }}
+    .section-heading h2 {{ margin: 0; }}
+    .notice {{ margin: 12px 0; padding: 12px 14px; border: 1px solid #86efac; border-radius: 6px; background: #f0fdf4; color: #166534; }}
+    .notice.error {{ border-color: #fca5a5; background: #fef2f2; color: #991b1b; }}
+    .chart-panel {{ background: white; border: 1px solid #d1d5db; border-radius: 8px; padding: 16px; overflow: hidden; }}
+    .chart-legend {{ display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 14px; font-size: 13px; }}
+    .legend-key {{ display: inline-flex; align-items: center; gap: 6px; }}
+    .legend-swatch {{ width: 12px; height: 12px; border-radius: 2px; }}
+    .trend-chart {{ display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); gap: 4px; min-height: 186px; align-items: end; }}
+    .trend-day {{ min-width: 0; text-align: center; }}
+    .trend-bars {{ height: 148px; display: flex; gap: 2px; align-items: end; justify-content: center; border-bottom: 1px solid #cbd5e1; }}
+    .trend-bar {{ width: 28%; min-width: 3px; position: relative; border-radius: 2px 2px 0 0; }}
+    .trend-bar.sleep {{ background: #2563eb; }}
+    .trend-bar.battery {{ background: #16a34a; }}
+    .trend-bar.readiness {{ background: #d97706; }}
+    .trend-value {{ position: absolute; left: 50%; top: -16px; transform: translateX(-50%); font-size: 9px; color: #374151; }}
+    .trend-date {{ display: block; margin-top: 6px; font-size: 9px; color: #6b7280; overflow: hidden; }}
+    .sleep-stack {{ display: flex; width: 100%; height: 34px; border-radius: 4px; overflow: hidden; background: #e5e7eb; }}
+    .sleep-segment {{ min-width: 2px; }}
+    .sleep-segment.deep {{ background: #1d4ed8; }}
+    .sleep-segment.light {{ background: #60a5fa; }}
+    .sleep-segment.rem {{ background: #7c3aed; }}
+    .sleep-segment.awake {{ background: #dc2626; }}
+    details {{ margin-top: 14px; }}
+    summary {{ cursor: pointer; color: #1d4ed8; font-weight: 700; }}
     @media (max-width: 760px) {{
       main {{ padding: 14px; }}
+      nav {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 8px; }}
+      nav a {{ white-space: nowrap; text-align: center; font-size: 14px; }}
       .summary {{ grid-template-columns: 1fr; }}
+      .section-heading {{ align-items: stretch; flex-direction: column; }}
+      .trend-value {{ display: none; }}
+      .trend-date {{ writing-mode: vertical-rl; height: 34px; }}
       table, thead, tbody, th, td, tr {{ display: block; }}
       thead {{ display: none; }}
       tr {{ border-bottom: 1px solid #d1d5db; padding: 8px; }}
@@ -62,7 +157,45 @@ def page(title: str, body: str) -> str:
     }}
   </style>
 </head>
-<body><main>{body}</main></body></html>"""
+<body><main>{body}</main>
+<script>
+  if ('serviceWorker' in navigator) {{
+    window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js'));
+  }}
+  document.querySelectorAll('[data-speech-target]').forEach((button) => {{
+    button.addEventListener('click', () => {{
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const target = document.getElementById(button.dataset.speechTarget);
+      if (!SpeechRecognition || !target) {{
+        button.disabled = true;
+        button.title = '当前浏览器不支持语音转写';
+        return;
+      }}
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'zh-CN';
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+      button.disabled = true;
+      recognition.onresult = (event) => {{
+        target.value = event.results[0][0].transcript;
+        const submitId = button.dataset.submitTarget;
+        if (submitId) document.getElementById(submitId)?.click();
+      }};
+      recognition.onerror = () => {{ button.disabled = false; }};
+      recognition.onend = () => {{ button.disabled = false; }};
+      recognition.start();
+    }});
+  }});
+  document.querySelectorAll('[data-disable-on-submit]').forEach((form) => {{
+    form.addEventListener('submit', () => {{
+      const button = form.querySelector('button[type="submit"]');
+      if (!button) return;
+      button.disabled = true;
+      button.textContent = button.dataset.loadingText || '处理中...';
+    }});
+  }});
+</script>
+</body></html>"""
 
 
 def safe(value: object) -> str:
@@ -73,13 +206,119 @@ def numeric(value: object) -> str:
     return "" if value is None else html.escape(str(value))
 
 
+def value_or(value: object, fallback: str = "无") -> object:
+    return fallback if value is None else value
+
+
+def format_sleep_duration(value: object) -> str:
+    if value is None:
+        return "无"
+    try:
+        minutes = max(0, int(value))
+    except (TypeError, ValueError):
+        return "无"
+    hours, remainder = divmod(minutes, 60)
+    return f"{hours} 小时 {remainder} 分"
+
+
 def nav() -> str:
-    return """<nav><a href="/">训练日</a><a href="/settings">触发设置</a><a href="/debug">调试观测</a></nav>"""
+    return """<nav><a href="/">总览</a><a href="/training">训练日</a><a href="/entry">录入</a><a href="/body">身体指标</a><a href="/settings">触发设置</a><a href="/debug">调试观测</a></nav>"""
 
 
 def option(value: str, current: object, label: str) -> str:
     selected = " selected" if value == str(current) else ""
     return f'<option value="{safe(value)}"{selected}>{safe(label)}</option>'
+
+
+def recovery_trend_chart(rows: list[dict[str, object]]) -> str:
+    if not rows:
+        return '<div class="empty">暂无 14 天恢复趋势数据。</div>'
+    days = []
+    table_rows = []
+    for row in rows:
+        bars = []
+        for field, class_name, label in (
+            ("sleep_score", "sleep", "睡眠"),
+            ("body_battery", "battery", "Body Battery"),
+            ("training_readiness", "readiness", "准备度"),
+        ):
+            value = row.get(field)
+            height = min(100.0, max(0.0, float(value))) if value is not None else 0
+            bars.append(
+                f'<div class="trend-bar {class_name}" style="height:{height}%" '
+                f'title="{safe(label)} {safe(value_or(value))}">'
+                f'<span class="trend-value">{safe(value_or(value, ""))}</span></div>'
+            )
+        date = str(row.get("metric_date") or "")
+        days.append(
+            f'<div class="trend-day"><div class="trend-bars">{"".join(bars)}</div>'
+            f'<span class="trend-date">{safe(date[5:])}</span></div>'
+        )
+        table_rows.append(
+            f'<tr><td data-label="日期">{safe(date)}</td>'
+            f'<td data-label="睡眠分数">{safe(value_or(row.get("sleep_score")))}</td>'
+            f'<td data-label="Body Battery">{safe(value_or(row.get("body_battery")))}</td>'
+            f'<td data-label="训练准备度">{safe(value_or(row.get("training_readiness")))}</td></tr>'
+        )
+    return f'''<div class="chart-panel" role="img" aria-label="最近十四天睡眠分数、Body Battery 和训练准备度趋势">
+      <div class="chart-legend">
+        <span class="legend-key"><span class="legend-swatch" style="background:#2563eb"></span>睡眠分数</span>
+        <span class="legend-key"><span class="legend-swatch" style="background:#16a34a"></span>Body Battery</span>
+        <span class="legend-key"><span class="legend-swatch" style="background:#d97706"></span>训练准备度</span>
+      </div>
+      <div class="trend-chart">{"".join(days)}</div>
+      <details><summary>查看趋势数据</summary><table><thead><tr><th>日期</th><th>睡眠分数</th><th>Body Battery</th><th>训练准备度</th></tr></thead><tbody>{"".join(table_rows)}</tbody></table></details>
+    </div>'''
+
+
+def sleep_stage_chart(record: dict[str, object] | None) -> str:
+    record = record or {}
+    stages = [
+        ("deep_sleep_minutes", "deep", "深睡"),
+        ("light_sleep_minutes", "light", "浅睡"),
+        ("rem_sleep_minutes", "rem", "REM"),
+        ("awake_minutes", "awake", "清醒"),
+    ]
+    values = [max(0, int(record.get(field) or 0)) for field, _, _ in stages]
+    total = sum(values)
+    if total == 0:
+        return '<div class="empty">暂无睡眠阶段明细。</div>'
+    segments = []
+    legend = []
+    for (field, class_name, label), value in zip(stages, values):
+        percent = value / total * 100
+        segments.append(
+            f'<span class="sleep-segment {class_name}" style="width:{percent:.2f}%" title="{safe(label)} {value} 分"></span>'
+        )
+        legend.append(f'<span class="legend-key">{safe(label)} {value} 分</span>')
+    return f'<div class="chart-panel"><div class="sleep-stack" aria-label="睡眠阶段构成">{"".join(segments)}</div><div class="chart-legend" style="margin:12px 0 0">{"".join(legend)}</div></div>'
+
+
+def health_detail_cards(details: dict[str, dict[str, object] | None]) -> str:
+    hrv = details.get("hrv") or {}
+    energy = details.get("energy") or {}
+    vitals = details.get("vitals") or {}
+    readiness = details.get("readiness") or {}
+    charged = energy.get("body_battery_charged")
+    drained = energy.get("body_battery_drained")
+    charge_drain = None if charged is None and drained is None else f"{value_or(charged)} / {value_or(drained)}"
+    items = (
+        ("夜间 HRV 均值 ms", hrv.get("last_night_average_ms")),
+        ("静息心率", vitals.get("heart_rate_resting")),
+        ("平均压力", vitals.get("stress_average")),
+        ("平均呼吸 次/分", vitals.get("respiration_average")),
+        ("平均血氧 %", vitals.get("pulse_ox_average")),
+        ("步数", energy.get("steps")),
+        ("活动热量 kcal", energy.get("active_calories")),
+        ("Body Battery 充/耗", charge_drain),
+        ("准备度级别", readiness.get("level")),
+    )
+    if not any(value is not None for _, value in items):
+        return '<div class="empty">暂无分类健康明细。</div>'
+    return '<div class="summary">' + ''.join(
+        f'<div class="field"><label>{safe(label)}</label><strong>{safe(value_or(value))}</strong></div>'
+        for label, value in items
+    ) + '</div>'
 
 
 class ReviewServer:
@@ -89,6 +328,167 @@ class ReviewServer:
 
     def connection(self):
         return trainingos_db.connect(self.db_path)
+
+    def offline_page(self) -> str:
+        return page(
+            "TrainingOS Offline",
+            "<h1>TrainingOS</h1><div class='empty'>当前无法连接本地服务。恢复连接后重新打开页面。</div>",
+        )
+
+    def dashboard_page(self, notice: str = "", notice_error: bool = False) -> str:
+        with self.connection() as connection:
+            snapshot = trainingos_dashboard.dashboard_snapshot(connection)
+        training = snapshot["training"]
+        recovery = snapshot["latest_recovery"] or {}
+        body_context = snapshot["body_metrics"]
+        body_values = body_context.get("values") or {}
+        cycle = snapshot["program_cycle"] or {}
+        health_details = snapshot["health_details"]
+        day_rows = "".join(
+            f"<tr><td>{safe(item.get('training_date'))}</td>"
+            f"<td>{safe(item.get('session_count'))}</td>"
+            f"<td>{safe(item.get('activity_names'))}</td>"
+            f"<td><a href='/day?date={safe(item.get('training_date'))}'>查看</a></td></tr>"
+            for item in snapshot["recent_training_days"]
+        )
+        pipeline_rows = "".join(
+            f"<tr><td>{safe(item.get('target_date'))}</td>"
+            f"<td>{safe(item.get('status'))}</td>"
+            f"<td>{safe(item.get('primary_group'))}</td>"
+            f"<td>{safe(item.get('recovery_adjustment'))}</td></tr>"
+            for item in snapshot["recent_pipeline_runs"]
+        )
+        pr_rows = "".join(
+            f"<tr><td>{safe(item.get('exercise'))}</td>"
+            f"<td>{safe(round(float(item.get('best_value') or 0), 1))}</td>"
+            f"<td>{safe(item.get('weight_kg'))} x {safe(item.get('reps'))}</td>"
+            f"<td>{safe(str(item.get('achieved_at') or '')[:10])}</td></tr>"
+            for item in snapshot["estimated_1rm_prs"]
+        )
+        notice_html = (
+            f'<div class="notice{" error" if notice_error else ""}">{safe(notice)}</div>'
+            if notice
+            else ""
+        )
+        body = f"""{nav()}
+        <h1>TrainingOS 总览</h1>
+        {notice_html}
+        <div class="summary">
+          <div class="field"><label>近 30 天训练日</label><strong>{safe(training['training_days'])}</strong></div>
+          <div class="field"><label>训练次数</label><strong>{safe(training['session_count'])}</strong></div>
+          <div class="field"><label>有效组</label><strong>{safe(training['set_count'])}</strong></div>
+          <div class="field"><label>训练量 kg</label><strong>{safe(training['volume_kg'])}</strong></div>
+          <div class="field"><label>PR 记录</label><strong>{safe(training['pr_record_count'])}</strong></div>
+          <div class="field"><label>数据缺失</label><strong>{safe(training['missing_reps'] + training['missing_weight'])}</strong></div>
+        </div>
+        <div class="section-heading">
+          <h2>今日状态</h2>
+          <form method="post" action="/garmin/sync" data-disable-on-submit>
+            <button type="submit" data-loading-text="读取中...">立即读取 Garmin</button>
+          </form>
+        </div>
+        <div class="summary">
+          <div class="field"><label>恢复日期</label><strong>{safe(value_or(recovery.get('metric_date')))}</strong></div>
+          <div class="field"><label>睡眠分数</label><strong>{safe(value_or(recovery.get('sleep_score')))}</strong></div>
+          <div class="field"><label>睡眠时长</label><strong>{safe(format_sleep_duration(recovery.get('sleep_duration_minutes')))}</strong></div>
+          <div class="field"><label>HRV 状态</label><strong>{safe(value_or(recovery.get('hrv_status')))}</strong></div>
+          <div class="field"><label>Body Battery</label><strong>{safe(value_or(recovery.get('body_battery')))}</strong></div>
+          <div class="field"><label>训练准备度</label><strong>{safe(value_or(recovery.get('training_readiness')))}</strong></div>
+          <div class="field"><label>体重 kg</label><strong>{safe(value_or(body_values.get('body_weight_kg')))}</strong></div>
+          <div class="field"><label>周期</label><strong>{safe(('W' + str(cycle.get('week')) + ' ' + str(cycle.get('phase'))) if cycle else '未开始')}</strong></div>
+        </div>
+        <h2>14 天恢复趋势</h2>
+        {recovery_trend_chart(snapshot['recovery_trends'])}
+        <h2>睡眠构成</h2>
+        {sleep_stage_chart(health_details.get('sleep'))}
+        <h2>详细健康指标</h2>
+        {health_detail_cards(health_details)}
+        <h2>最近训练日</h2>
+        {('<table><thead><tr><th>日期</th><th>活动数</th><th>训练内容</th><th></th></tr></thead><tbody>' + day_rows + '</tbody></table>') if day_rows else '<div class="empty">暂无训练记录。</div>'}
+        <h2>当前 PR</h2>
+        {('<table><thead><tr><th>动作</th><th>e1RM kg</th><th>最佳组</th><th>日期</th></tr></thead><tbody>' + pr_rows + '</tbody></table>') if pr_rows else '<div class="empty">暂无 PR 状态。</div>'}
+        <h2>最近计划流程</h2>
+        {('<table><thead><tr><th>目标日期</th><th>状态</th><th>主肌群</th><th>恢复调整</th></tr></thead><tbody>' + pipeline_rows + '</tbody></table>') if pipeline_rows else '<div class="empty">暂无计划流程记录。</div>'}
+        """
+        return page("TrainingOS Dashboard", body)
+
+    def sync_garmin_today(self, runner=subprocess.run, today: str | None = None) -> str:
+        target_date = today or dt.date.today().isoformat()
+        command = [
+            sys.executable,
+            str(GARMIN_IMPORT_SCRIPT),
+            "--days",
+            "1",
+            "--end-date",
+            target_date,
+            "--read-provider",
+            "personal",
+            "--write-db",
+            "--db",
+            str(self.db_path),
+        ]
+        trainingos_observability.record_event(
+            "garmin_manual_sync_started",
+            details={"metric_date": target_date, "provider": "personal"},
+        )
+        try:
+            completed = runner(
+                command,
+                cwd=str(ROOT),
+                text=True,
+                capture_output=True,
+                timeout=90,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            trainingos_observability.record_event(
+                "garmin_manual_sync_finished",
+                status="error",
+                details={"metric_date": target_date, "reason": "timeout"},
+            )
+            return self.dashboard_page("Garmin 读取超时，请稍后重试或查看调试观测。", True)
+        except OSError as exc:
+            trainingos_observability.record_event(
+                "garmin_manual_sync_finished",
+                status="error",
+                details={"metric_date": target_date, "reason": type(exc).__name__},
+            )
+            return self.dashboard_page("无法启动 Garmin 读取进程，请查看调试观测。", True)
+
+        if completed.returncode != 0:
+            trainingos_observability.record_event(
+                "garmin_manual_sync_finished",
+                status="error",
+                details={"metric_date": target_date, "returncode": completed.returncode},
+            )
+            return self.dashboard_page("Garmin 读取失败，请查看调试观测后重试。", True)
+
+        with self.connection() as connection:
+            row = connection.execute(
+                """
+                select sleep_score, sleep_duration_minutes, hrv_status,
+                       resting_heart_rate, body_battery, stress_score,
+                       training_readiness, recovery_time_hours
+                from daily_recovery_metrics
+                where athlete_id = ? and metric_date = ?
+                order by created_at desc limit 1
+                """,
+                (trainingos_db.DEFAULT_ATHLETE_ID, target_date),
+            ).fetchone()
+        available = sum(value is not None for value in row) if row else 0
+        if available == 0:
+            trainingos_observability.record_event(
+                "garmin_manual_sync_finished",
+                status="warning",
+                details={"metric_date": target_date, "available_fields": 0},
+            )
+            return self.dashboard_page("Garmin 已响应，但今天尚无可显示的恢复指标。", True)
+
+        trainingos_observability.record_event(
+            "garmin_manual_sync_finished",
+            details={"metric_date": target_date, "available_fields": available},
+        )
+        return self.dashboard_page(f"Garmin 今日状态同步成功，更新了 {available} 个恢复指标。")
 
     def list_page(self) -> str:
         with self.connection() as connection:
@@ -112,6 +512,100 @@ class ReviewServer:
         else:
             body += """<div class="empty">还没有已导入的训练。先运行 Garmin 完成活动导入，或稍后添加手动录入入口。</div>"""
         return page("TrainingOS Review", body)
+
+    def manual_entry_page(
+        self,
+        draft: dict[str, object] | None = None,
+        error: str | None = None,
+    ) -> str:
+        draft = draft or {}
+        sets = list(draft.get("sets") or [])
+        row_count = min(12, max(6, len(sets) + 1))
+        rows = []
+        for index in range(row_count):
+            item = sets[index] if index < len(sets) else {}
+            rows.append(
+                f"""<tr>
+                  <td data-label="动作"><input name="exercise_name_{index}" value="{safe(item.get('exercise_name'))}"></td>
+                  <td data-label="组序"><input name="set_order_{index}" type="number" min="1" value="{numeric(item.get('set_order') or index + 1)}"></td>
+                  <td data-label="重量 kg"><input name="weight_kg_{index}" inputmode="decimal" value="{numeric(item.get('weight_kg'))}"></td>
+                  <td data-label="次数"><input name="reps_{index}" type="number" min="0" value="{numeric(item.get('reps'))}"></td>
+                  <td data-label="RPE"><input name="rpe_{index}" inputmode="decimal" value="{numeric(item.get('rpe'))}"></td>
+                </tr>"""
+            )
+        completed_at = draft.get("completed_at") or dt.datetime.now().strftime("%Y-%m-%dT%H:%M")
+        error_block = f"<div class='empty'>{safe(error)}</div>" if error else ""
+        body = f"""{nav()}
+        <h1>手动训练录入</h1>
+        {error_block}
+        <form method="post" action="/entry/save">
+          <input type="hidden" name="set_count" value="{row_count}">
+          <div class="summary">
+            <div class="field"><label>训练名称</label><input name="activity_name" required value="{safe(draft.get('activity_name') or '')}"></div>
+            <div class="field"><label>完成时间</label><input name="completed_at" type="datetime-local" required value="{safe(completed_at)}"></div>
+            <div class="field"><label>整体 RPE</label><input name="overall_rpe" inputmode="decimal" value="{numeric(draft.get('overall_rpe'))}"></div>
+            <div class="field"><label>疲劳 1-10</label><input name="fatigue_rating" type="number" min="1" max="10" value="{numeric(draft.get('fatigue_rating'))}"></div>
+          </div>
+          <div class="row-actions">
+            <input id="entry-transcript" name="voice_transcript" autocomplete="off" placeholder="卧推 80公斤 8次 RPE8">
+            <button type="button" data-speech-target="entry-transcript" data-submit-target="entry-parse" title="语音输入" aria-label="语音输入">&#127908;</button>
+            <button id="entry-parse" class="secondary" type="submit" formaction="/entry/voice">解析</button>
+          </div>
+          <h2>组记录</h2>
+          <table>
+            <thead><tr><th>动作</th><th>组序</th><th>重量 kg</th><th>次数</th><th>RPE</th></tr></thead>
+            <tbody>{''.join(rows)}</tbody>
+          </table>
+          <h2>主观记录</h2>
+          <label>疼痛 / 技术备注</label>
+          <textarea name="pain_notes">{safe(draft.get('pain_notes'))}</textarea>
+          <label>恢复 / 状态备注</label>
+          <textarea name="readiness_notes">{safe(draft.get('readiness_notes'))}</textarea>
+          <div class="row-actions"><button type="submit">保存训练</button></div>
+        </form>"""
+        return page("TrainingOS Manual Entry", body)
+
+    def parse_manual_voice(self, form_data: dict[str, list[str]]) -> str:
+        draft = draft_from_form(form_data)
+        transcript = form_data.get("voice_transcript", [""])[0]
+        sets = list(draft["sets"])
+        result = trainingos_voice_input.parse_voice_entry(
+            transcript,
+            previous_set=sets[-1] if sets else None,
+            next_order=len(sets) + 1,
+        )
+        if result["status"] != "parsed":
+            return self.manual_entry_page(draft, ", ".join(result["issues"]))
+        if len(sets) + len(result["sets"]) > 12:
+            return self.manual_entry_page(draft, "set_count_out_of_range")
+        draft["sets"] = sets + result["sets"]
+        return self.manual_entry_page(draft)
+
+    def save_manual_entry(self, form_data: dict[str, list[str]]) -> str:
+        draft = draft_from_form(form_data)
+        try:
+            if not str(draft["activity_name"]).strip():
+                raise ValueError("activity_name_required")
+            completed_at = dt.datetime.fromisoformat(str(draft["completed_at"]))
+            if not draft["sets"]:
+                raise ValueError("at_least_one_set_required")
+        except ValueError as exc:
+            return self.manual_entry_page(draft, str(exc))
+        workout = {
+            "provider": "local",
+            "source_tool": "local_manual_entry",
+            "completed_at": completed_at.strftime("%Y-%m-%d %H:%M:%S"),
+            "session_type": "strength_training",
+            "activity_name": draft["activity_name"],
+            "overall_rpe": draft["overall_rpe"],
+            "fatigue_rating": draft["fatigue_rating"],
+            "pain_notes": draft["pain_notes"],
+            "readiness_notes": draft["readiness_notes"],
+            "sets": draft["sets"],
+        }
+        with self.connection() as connection:
+            session_id = trainingos_db.save_imported_workout(connection, workout)
+        return self.session_page(session_id, saved=True)
 
     def day_page(self, training_date: str) -> str:
         with self.connection() as connection:
@@ -141,12 +635,18 @@ class ReviewServer:
         </div>"""
         return page("TrainingOS Day Review", body)
 
-    def session_page(self, session_id: str, saved: bool = False) -> str:
+    def session_page(
+        self,
+        session_id: str,
+        saved: bool = False,
+        draft_sets: list[dict[str, object]] | None = None,
+        voice_error: str | None = None,
+    ) -> str:
         with self.connection() as connection:
             session = trainingos_db.get_session_for_review(connection, session_id)
         if session is None:
             return page("Not found", "<h1>找不到训练记录</h1><p><a href='/'>返回</a></p>")
-        sets = session.get("sets", [])
+        sets = draft_sets if draft_sets is not None else session.get("sets", [])
         if not sets:
             sets = [
                 {
@@ -190,12 +690,26 @@ class ReviewServer:
               <tbody>{''.join(pr_rows)}</tbody>
             </table>"""
         saved_notice = "<p class='muted'>已保存校正。</p>" if saved else ""
+        voice_notice = f"<div class='empty'>{safe(voice_error)}</div>" if voice_error else ""
+        target_options = "".join(
+            f'<option value="{index + 1}">第 {index + 1} 组</option>' for index in range(len(sets))
+        )
         body = f"""{nav()}
         <p><a href="/">返回列表</a></p>
         <h1>{safe(session.get("activity_name") or "Completed Workout")}</h1>
         {saved_notice}
+        {voice_notice}
         <h2>本次 PR</h2>
         {pr_block}
+        <form method="post" action="/session/voice">
+          <input type="hidden" name="session_id" value="{safe(session_id)}">
+          <div class="row-actions">
+            <select name="target_set">{target_options}</select>
+            <input id="session-transcript" name="voice_transcript" autocomplete="off" placeholder="卧推 80公斤 8次 RPE8">
+            <button type="button" data-speech-target="session-transcript" data-submit-target="session-parse" title="语音输入" aria-label="语音输入">&#127908;</button>
+            <button id="session-parse" class="secondary" type="submit">填入</button>
+          </div>
+        </form>
         <form method="post" action="/save">
           <input type="hidden" name="session_id" value="{safe(session_id)}">
           <input type="hidden" name="set_count" value="{len(sets)}">
@@ -222,6 +736,34 @@ class ReviewServer:
           </div>
         </form>"""
         return page("TrainingOS Review", body)
+
+    def parse_session_voice(self, form_data: dict[str, list[str]]) -> str:
+        session_id = form_data.get("session_id", [""])[0]
+        with self.connection() as connection:
+            session = trainingos_db.get_session_for_review(connection, session_id)
+        if session is None:
+            return page("Not found", "<h1>找不到训练记录</h1><p><a href='/'>返回</a></p>")
+        sets = [dict(item) for item in session.get("sets", [])]
+        if not sets:
+            sets = [{"set_order": 1, "set_type": "working"}]
+        target = parse_int(form_data.get("target_set", ["1"])[0]) or 1
+        target = max(1, min(target, len(sets)))
+        previous = sets[target - 2] if target > 1 else None
+        result = trainingos_voice_input.parse_voice_entry(
+            form_data.get("voice_transcript", [""])[0],
+            previous_set=previous,
+            next_order=target,
+        )
+        if result["status"] != "parsed":
+            return self.session_page(
+                session_id,
+                draft_sets=sets,
+                voice_error=", ".join(result["issues"]),
+            )
+        sets[target - 1 : target] = result["sets"]
+        for index, item in enumerate(sets):
+            item["set_order"] = index + 1
+        return self.session_page(session_id, draft_sets=sets)
 
     def debug_page(self) -> str:
         events = trainingos_observability.read_events(100)
@@ -476,6 +1018,66 @@ class ReviewServer:
             )
         return self.settings_page(trigger_decision=decision)
 
+    def body_metrics_page(self, saved: bool = False, error: str | None = None) -> str:
+        with self.connection() as connection:
+            records = trainingos_db.get_recent_body_metrics(connection, 20)
+        notice = "<p class='muted'>身体指标已保存在本机 SQLite。</p>" if saved else ""
+        error_notice = f"<div class='empty'>{safe(error)}</div>" if error else ""
+        rows = ""
+        for record in records:
+            rows += (
+                f"<tr><td>{safe(record.get('metric_date'))}</td>"
+                f"<td>{safe(record.get('body_weight_kg'))}</td>"
+                f"<td>{safe(record.get('body_fat_percent'))}</td>"
+                f"<td>{safe(record.get('waist_cm'))}</td>"
+                f"<td>{safe(record.get('chest_cm'))}</td>"
+                f"<td>{safe(record.get('hip_cm'))}</td>"
+                f"<td>{safe(record.get('arm_cm'))}</td>"
+                f"<td>{safe(record.get('leg_cm'))}</td></tr>"
+            )
+        history = (
+            "<table><thead><tr><th>日期</th><th>体重 kg</th><th>体脂 %</th>"
+            "<th>腰围 cm</th><th>胸围 cm</th><th>臀围 cm</th><th>臂围 cm</th><th>腿围 cm</th>"
+            f"</tr></thead><tbody>{rows}</tbody></table>"
+            if rows
+            else "<div class='empty'>暂无身体指标记录。</div>"
+        )
+        body = f"""{nav()}
+        <h1>身体指标</h1>
+        {notice}{error_notice}
+        <p class="muted">数据仅写入本机 SQLite。同一天再次保存会更新原记录；至少填写一个数值。</p>
+        <form method="post" action="/body/save">
+          <div class="summary">
+            <div class="field"><label>日期</label><input name="metric_date" type="date" required value="{dt.date.today().isoformat()}"></div>
+            <div class="field"><label>体重 kg</label><input name="body_weight_kg" type="number" min="20" max="400" step="0.1"></div>
+            <div class="field"><label>体脂 %</label><input name="body_fat_percent" type="number" min="2" max="75" step="0.1"></div>
+            <div class="field"><label>腰围 cm</label><input name="waist_cm" type="number" min="30" max="250" step="0.1"></div>
+            <div class="field"><label>胸围 cm</label><input name="chest_cm" type="number" min="30" max="250" step="0.1"></div>
+            <div class="field"><label>臀围 cm</label><input name="hip_cm" type="number" min="30" max="250" step="0.1"></div>
+            <div class="field"><label>臂围 cm</label><input name="arm_cm" type="number" min="10" max="100" step="0.1"></div>
+            <div class="field"><label>腿围 cm</label><input name="leg_cm" type="number" min="15" max="150" step="0.1"></div>
+          </div>
+          <div class="field"><label>备注</label><textarea name="notes"></textarea></div>
+          <div class="row-actions"><button type="submit">保存身体指标</button></div>
+        </form>
+        <h2>最近记录</h2>{history}"""
+        return page("TrainingOS Body Metrics", body)
+
+    def save_body_metrics(self, form_data: dict[str, list[str]]) -> str:
+        payload = {
+            "metric_date": form_data.get("metric_date", [""])[0],
+            "notes": form_data.get("notes", [""])[0],
+        }
+        for field_name in trainingos_db.BODY_METRIC_RANGES:
+            payload[field_name] = parse_float(form_data.get(field_name, [""])[0])
+        try:
+            dt.date.fromisoformat(str(payload["metric_date"]))
+            with self.connection() as connection:
+                trainingos_db.upsert_body_metric(connection, payload)
+        except ValueError as exc:
+            return self.body_metrics_page(error=str(exc))
+        return self.body_metrics_page(saved=True)
+
     def save(self, form_data: dict[str, list[str]]) -> str:
         session_id = form_data.get("session_id", [""])[0]
         set_count = int(form_data.get("set_count", ["0"])[0] or 0)
@@ -509,6 +1111,35 @@ class ReviewServer:
         return self.session_page(session_id, saved=True)
 
 
+def draft_from_form(form_data: dict[str, list[str]]) -> dict[str, object]:
+    set_count = min(12, max(0, parse_int(form_data.get("set_count", ["0"])[0]) or 0))
+    sets = []
+    for index in range(set_count):
+        exercise_name = form_data.get(f"exercise_name_{index}", [""])[0].strip()
+        if not exercise_name:
+            continue
+        sets.append(
+            {
+                "exercise_name": exercise_name,
+                "set_order": parse_int(form_data.get(f"set_order_{index}", [""])[0]) or len(sets) + 1,
+                "set_type": form_data.get(f"set_type_{index}", ["working"])[0].strip() or "working",
+                "weight_kg": parse_float(form_data.get(f"weight_kg_{index}", [""])[0]),
+                "reps": parse_int(form_data.get(f"reps_{index}", [""])[0]),
+                "rpe": parse_float(form_data.get(f"rpe_{index}", [""])[0]),
+                "notes": form_data.get(f"notes_{index}", [""])[0].strip() or None,
+            }
+        )
+    return {
+        "activity_name": form_data.get("activity_name", [""])[0].strip(),
+        "completed_at": form_data.get("completed_at", [""])[0],
+        "overall_rpe": parse_float(form_data.get("overall_rpe", [""])[0]),
+        "fatigue_rating": parse_int(form_data.get("fatigue_rating", [""])[0]),
+        "pain_notes": form_data.get("pain_notes", [""])[0].strip() or None,
+        "readiness_notes": form_data.get("readiness_notes", [""])[0].strip() or None,
+        "sets": sets,
+    }
+
+
 def parse_float(value: str) -> float | None:
     value = value.strip()
     if not value:
@@ -532,8 +1163,37 @@ def make_handler(app: ReviewServer):
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
             query = parse_qs(parsed.query)
+            if parsed.path == "/manifest.webmanifest":
+                self.respond(
+                    json.dumps(PWA_MANIFEST, ensure_ascii=False),
+                    content_type="application/manifest+json; charset=utf-8",
+                )
+                return
+            if parsed.path == "/service-worker.js":
+                self.respond(
+                    SERVICE_WORKER,
+                    content_type="application/javascript; charset=utf-8",
+                    extra_headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"},
+                )
+                return
+            if parsed.path == "/app-icon.svg":
+                self.respond(
+                    APP_ICON_PATH.read_text(encoding="utf-8"),
+                    content_type="image/svg+xml; charset=utf-8",
+                    extra_headers={"Cache-Control": "public, max-age=86400"},
+                )
+                return
+            if parsed.path == "/offline":
+                self.respond(app.offline_page())
+                return
             if parsed.path == "/":
+                self.respond(app.dashboard_page())
+                return
+            if parsed.path == "/training":
                 self.respond(app.list_page())
+                return
+            if parsed.path == "/entry":
+                self.respond(app.manual_entry_page())
                 return
             if parsed.path == "/session":
                 self.respond(app.session_page(query.get("id", [""])[0]))
@@ -556,9 +1216,15 @@ def make_handler(app: ReviewServer):
             if parsed.path == "/settings":
                 self.respond(app.settings_page())
                 return
+            if parsed.path == "/body":
+                self.respond(app.body_metrics_page())
+                return
             self.send_error(404)
 
         def do_POST(self) -> None:
+            if self.path == "/garmin/sync":
+                self.respond(app.sync_garmin_today())
+                return
             if self.path == "/debug/clear":
                 trainingos_observability.clear_events()
                 self.respond(app.debug_page())
@@ -583,6 +1249,26 @@ def make_handler(app: ReviewServer):
                 body = self.rfile.read(length).decode("utf-8")
                 self.respond(app.check_trigger(parse_qs(body)))
                 return
+            if self.path == "/body/save":
+                length = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(length).decode("utf-8")
+                self.respond(app.save_body_metrics(parse_qs(body)))
+                return
+            if self.path == "/entry/voice":
+                length = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(length).decode("utf-8")
+                self.respond(app.parse_manual_voice(parse_qs(body)))
+                return
+            if self.path == "/entry/save":
+                length = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(length).decode("utf-8")
+                self.respond(app.save_manual_entry(parse_qs(body)))
+                return
+            if self.path == "/session/voice":
+                length = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(length).decode("utf-8")
+                self.respond(app.parse_session_voice(parse_qs(body)))
+                return
             if self.path != "/save":
                 self.send_error(404)
                 return
@@ -590,11 +1276,18 @@ def make_handler(app: ReviewServer):
             body = self.rfile.read(length).decode("utf-8")
             self.respond(app.save(parse_qs(body)))
 
-        def respond(self, content: str) -> None:
+        def respond(
+            self,
+            content: str,
+            content_type: str = "text/html; charset=utf-8",
+            extra_headers: dict[str, str] | None = None,
+        ) -> None:
             payload = content.encode("utf-8")
             self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(payload)))
+            for name, value in (extra_headers or {}).items():
+                self.send_header(name, value)
             self.end_headers()
             self.wfile.write(payload)
 
@@ -612,7 +1305,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     app = ReviewServer(Path(args.db))
-    server = HTTPServer((args.host, args.port), make_handler(app))
+    server = ThreadingHTTPServer((args.host, args.port), make_handler(app))
     print(f"TrainingOS review UI: http://{args.host}:{args.port}")
     print("Press Ctrl+C to stop.")
     server.serve_forever()

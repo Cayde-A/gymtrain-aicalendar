@@ -9,9 +9,9 @@ Automatically import Garmin data into TrainingOS so workout analysis can use rec
 Use a staged approach:
 
 ```text
-Stage 1: local scheduled import
+Stage 1: official Personal API local scheduled import
 Stage 2: monthly minimized Supabase sync
-Stage 3: official Garmin API or stable production provider
+Stage 3: official Training API write adapter if business access is needed
 ```
 
 ## Stage 1: Local Scheduled Import
@@ -35,10 +35,11 @@ Why:
 
 Recommended source order:
 
-1. `garmin-data-export` for full and incremental exports.
-2. `python-garminconnect` for targeted daily recovery metrics.
-3. `garmin-connect-export` for activity CSV/GPX/TCX fallback.
-4. `GarminDB` for local historical warehouse/reference.
+1. Garmin Connect Personal API for official health and activity reads.
+2. `python-garminconnect` for temporary read fallback and workout writes.
+3. `garmin-data-export` for historical and incremental export fallback.
+4. `garmin-connect-export` for activity CSV/GPX/TCX fallback.
+5. GarminDB for local historical warehouse/reference.
 
 ## Stage 1 Setup Flow
 
@@ -52,14 +53,14 @@ TrainingOS/imports/
 
 These are ignored by Git.
 
-### 2. First Garmin login
+### 2. First Garmin authentication
 
-Run an interactive login once with the selected Garmin tool.
+Create a Garmin Personal API key and store it in the local protected key file. Run the compatibility login only when workout write testing is required.
 
 Expected result:
 
 ```text
-Garmin token cached locally
+Personal API bearer token cached locally
 No password committed
 No token committed
 ```
@@ -171,10 +172,10 @@ Keep local SQLite history
 
 ### 7. Schedule
 
-Recommended MVP schedule:
+Recommended current schedule:
 
 ```text
-Daily import: 06:30
+Daily import and plan workflow: 00:00 local time
 Post-workout import: manual Shortcut or button
 Evening review: 21:00
 Monthly minimized sync: first day of month

@@ -20,6 +20,12 @@ create table if not exists exercise_catalog (
   primary_muscle text,
   equipment text,
   location text,
+  garmin_category text,
+  garmin_exercise_name text,
+  venue_availability_status text not null default 'unknown',
+  verification_level text not null default 'unverified',
+  verification_source text,
+  last_verified_on text,
   is_active integer not null default 1,
   created_at text not null default current_timestamp
 );
@@ -63,6 +69,7 @@ create table if not exists completed_sessions (
   planned_session_id text references planned_sessions(id),
   athlete_id text not null references athletes(id),
   provider text,
+  source_tool text,
   external_activity_id text,
   started_at text,
   completed_at text not null,
@@ -137,6 +144,7 @@ create table if not exists daily_recovery_metrics (
   athlete_id text not null references athletes(id),
   metric_date text not null,
   provider text not null default 'garmin',
+  source_tool text,
   sleep_score real,
   sleep_duration_minutes integer,
   hrv_status text,
@@ -148,6 +156,112 @@ create table if not exists daily_recovery_metrics (
   steps integer,
   calories integer,
   raw_payload_path text,
+  created_at text not null default current_timestamp,
+  unique (athlete_id, metric_date, provider)
+);
+
+create table if not exists daily_sleep_metrics (
+  id text primary key,
+  athlete_id text not null references athletes(id),
+  metric_date text not null,
+  provider text not null default 'garmin',
+  source_tool text,
+  deep_sleep_minutes integer,
+  light_sleep_minutes integer,
+  rem_sleep_minutes integer,
+  awake_minutes integer,
+  nap_minutes integer,
+  average_sleep_stress real,
+  average_sleep_heart_rate real,
+  average_spo2 real,
+  minimum_spo2 real,
+  maximum_spo2 real,
+  average_respiration real,
+  minimum_respiration real,
+  maximum_respiration real,
+  sleep_need_minutes integer,
+  created_at text not null default current_timestamp,
+  unique (athlete_id, metric_date, provider)
+);
+
+create table if not exists daily_hrv_metrics (
+  id text primary key,
+  athlete_id text not null references athletes(id),
+  metric_date text not null,
+  provider text not null default 'garmin',
+  source_tool text,
+  status text,
+  weekly_average_ms real,
+  last_night_average_ms real,
+  last_night_5min_high_ms real,
+  baseline_low_upper_ms real,
+  baseline_balanced_low_ms real,
+  baseline_balanced_upper_ms real,
+  baseline_marker real,
+  created_at text not null default current_timestamp,
+  unique (athlete_id, metric_date, provider)
+);
+
+create table if not exists daily_energy_metrics (
+  id text primary key,
+  athlete_id text not null references athletes(id),
+  metric_date text not null,
+  provider text not null default 'garmin',
+  source_tool text,
+  body_battery_min integer,
+  body_battery_max integer,
+  body_battery_charged integer,
+  body_battery_drained integer,
+  body_battery_latest integer,
+  resting_calories integer,
+  active_calories integer,
+  total_calories integer,
+  steps integer,
+  floors_ascended real,
+  floors_descended real,
+  moderate_intensity_minutes integer,
+  vigorous_intensity_minutes integer,
+  created_at text not null default current_timestamp,
+  unique (athlete_id, metric_date, provider)
+);
+
+create table if not exists daily_vitals_metrics (
+  id text primary key,
+  athlete_id text not null references athletes(id),
+  metric_date text not null,
+  provider text not null default 'garmin',
+  source_tool text,
+  heart_rate_min integer,
+  heart_rate_max integer,
+  heart_rate_resting integer,
+  stress_average real,
+  stress_maximum real,
+  respiration_average real,
+  respiration_minimum real,
+  respiration_maximum real,
+  respiration_latest real,
+  pulse_ox_average real,
+  pulse_ox_minimum real,
+  pulse_ox_latest real,
+  created_at text not null default current_timestamp,
+  unique (athlete_id, metric_date, provider)
+);
+
+create table if not exists daily_readiness_metrics (
+  id text primary key,
+  athlete_id text not null references athletes(id),
+  metric_date text not null,
+  provider text not null default 'garmin',
+  source_tool text,
+  score real,
+  level text,
+  sleep_score_factor_percent real,
+  recovery_time_factor_percent real,
+  hrv_factor_percent real,
+  acute_load_factor_percent real,
+  stress_history_factor_percent real,
+  sleep_history_factor_percent real,
+  feedback_short text,
   created_at text not null default current_timestamp,
   unique (athlete_id, metric_date, provider)
 );
@@ -268,6 +382,42 @@ create table if not exists api_trigger_logs (
   created_at text not null default current_timestamp
 );
 
+create table if not exists pipeline_runs (
+  id text primary key,
+  athlete_id text not null references athletes(id),
+  source_training_date text not null,
+  target_date text not null,
+  status text not null,
+  review_id text references ai_reviews(id),
+  plan_json text,
+  quality_report_json text,
+  garmin_payload_path text,
+  push_result_path text,
+  error_json text,
+  idempotency_key text not null unique,
+  created_at text not null default current_timestamp,
+  updated_at text not null default current_timestamp
+);
+
+create table if not exists garmin_write_operations (
+  id text primary key,
+  athlete_id text not null references athletes(id),
+  idempotency_key text not null unique,
+  payload_hash text not null,
+  workout_name text not null,
+  schedule_date text not null,
+  status text not null default 'pending',
+  phase text not null default 'created',
+  workout_id integer,
+  workout_schedule_id integer,
+  attempt_count integer not null default 0,
+  next_retry_at text,
+  last_error_json text,
+  result_json text,
+  created_at text not null default current_timestamp,
+  updated_at text not null default current_timestamp
+);
+
 create index if not exists idx_planned_sessions_athlete_start
   on planned_sessions (athlete_id, planned_start);
 
@@ -286,8 +436,29 @@ create index if not exists idx_exercise_pr_state_exercise
 create index if not exists idx_daily_recovery_athlete_date
   on daily_recovery_metrics (athlete_id, metric_date);
 
+create index if not exists idx_daily_sleep_athlete_date
+  on daily_sleep_metrics (athlete_id, metric_date);
+
+create index if not exists idx_daily_hrv_athlete_date
+  on daily_hrv_metrics (athlete_id, metric_date);
+
+create index if not exists idx_daily_energy_athlete_date
+  on daily_energy_metrics (athlete_id, metric_date);
+
+create index if not exists idx_daily_vitals_athlete_date
+  on daily_vitals_metrics (athlete_id, metric_date);
+
+create index if not exists idx_daily_readiness_athlete_date
+  on daily_readiness_metrics (athlete_id, metric_date);
+
 create index if not exists idx_raw_import_cache_retention
   on raw_import_cache (retention_until, deleted_at);
 
 create index if not exists idx_api_trigger_logs_athlete_created
   on api_trigger_logs (athlete_id, created_at);
+
+create index if not exists idx_pipeline_runs_athlete_target
+  on pipeline_runs (athlete_id, target_date);
+
+create index if not exists idx_garmin_write_operations_status_retry
+  on garmin_write_operations (status, next_retry_at);

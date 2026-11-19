@@ -6,6 +6,59 @@ from scripts import trainingos_db
 
 
 class TrainingOSDbTestCase(unittest.TestCase):
+    def test_body_metrics_upsert_validates_and_updates_same_date(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "trainingos.sqlite"
+            trainingos_db.init_db(db_path)
+            with trainingos_db.connect(db_path) as connection:
+                first_id = trainingos_db.upsert_body_metric(
+                    connection,
+                    {"metric_date": "2026-10-04", "body_weight_kg": 80.2, "waist_cm": 84},
+                )
+                second_id = trainingos_db.upsert_body_metric(
+                    connection,
+                    {"metric_date": "2026-10-04", "body_weight_kg": 79.8, "body_fat_percent": 15},
+                )
+                records = trainingos_db.get_recent_body_metrics(connection)
+                with self.assertRaises(ValueError):
+                    trainingos_db.upsert_body_metric(
+                        connection,
+                        {"metric_date": "2026-10-05", "body_weight_kg": 1000},
+                    )
+        self.assertEqual(first_id, second_id)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["body_weight_kg"], 79.8)
+        self.assertEqual(records[0]["body_fat_percent"], 15)
+
+    def test_body_metric_context_includes_latest_values_and_change(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "trainingos.sqlite"
+            trainingos_db.init_db(db_path)
+            with trainingos_db.connect(db_path) as connection:
+                trainingos_db.upsert_body_metric(
+                    connection,
+                    {"metric_date": "2026-10-01", "body_weight_kg": 80, "waist_cm": 85},
+                )
+                trainingos_db.upsert_body_metric(
+                    connection,
+                    {"metric_date": "2026-10-04", "body_weight_kg": 79.5, "waist_cm": 84},
+                )
+                session_id = trainingos_db.save_imported_workout(
+                    connection,
+                    {
+                        "provider": "garmin",
+                        "external_activity_id": "body-packet",
+                        "completed_at": "2026-10-04 09:00:00",
+                        "session_type": "strength_training",
+                        "sets": [],
+                    },
+                )
+                packet = trainingos_db.build_ai_review_packet(connection, session_id)
+        self.assertEqual(packet["body_metrics"]["metric_date"], "2026-10-04")
+        self.assertEqual(packet["body_metrics"]["values"]["body_weight_kg"], 79.5)
+        self.assertEqual(packet["body_metrics"]["change_from_previous"]["body_weight_kg"], -0.5)
+        self.assertEqual(packet["body_metrics"]["change_from_previous"]["waist_cm"], -1.0)
+
     def test_init_db_creates_core_tables(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "trainingos.sqlite"
@@ -335,6 +388,8 @@ class TrainingOSDbTestCase(unittest.TestCase):
         self.assertIn("initial_draft", prompt)
         self.assertIn("Return JSON only", prompt)
         self.assertIn("Garmin sleep, HRV, Body Battery", prompt)
+        self.assertIn("one primary large muscle group", prompt)
+        self.assertIn("prioritize legs next", prompt)
         self.assertIn("Bench Press", prompt)
 
     def test_build_ai_review_packet_is_standardized_and_compact(self):
@@ -364,9 +419,18 @@ class TrainingOSDbTestCase(unittest.TestCase):
                 packet = trainingos_db.build_ai_review_packet(connection, session_id)
         self.assertEqual(packet["task"], "post_workout_review_and_initial_next_day_draft")
         self.assertTrue(packet["constraints"]["return_json_only"])
+        self.assertTrue(packet["constraints"]["one_primary_large_muscle_group_per_session"])
+        self.assertTrue(packet["constraints"]["reduce_adjacent_day_muscle_overlap"])
+        self.assertTrue(packet["constraints"]["after_chest_shoulder_day_prioritize_legs"])
+        self.assertTrue(packet["constraints"]["avoid_back_or_arm_primary_after_chest_shoulder_day"])
+        self.assertTrue(packet["constraints"]["allow_interstitial_core_sessions"])
+        self.assertTrue(packet["constraints"]["core_sessions_must_not_interfere_with_adjacent_primary_days"])
         self.assertEqual(packet["metrics"]["set_count"], 1)
         self.assertAlmostEqual(packet["metrics"]["total_volume_kg"], 500)
         self.assertIn("initial_next_day_plan", packet["required_output_schema"])
+        self.assertIn("primary_large_muscle_group", packet["required_output_schema"]["initial_next_day_plan"])
+        self.assertIn("interstitial_core", packet["required_output_schema"]["initial_next_day_plan"])
+        self.assertIn("avoided_overlap", packet["required_output_schema"]["initial_next_day_plan"])
         self.assertEqual(packet["trigger_policy"]["post_workout_ai_mode"], "manual_copy_paste")
         self.assertFalse(packet["trigger_policy"]["auto_api_enabled"])
 
@@ -605,6 +669,83 @@ class TrainingOSDbTestCase(unittest.TestCase):
         self.assertTrue(review_id.startswith("ai_review_"))
         self.assertEqual(reviews[0]["decision"], "increase")
         self.assertEqual(reviews[0]["summary"], "Day review")
+
+    def test_upsert_daily_recovery_metric_updates_same_date_provider(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "trainingos.sqlite"
+            trainingos_db.init_db(db_path)
+            with trainingos_db.connect(db_path) as connection:
+                first_id = trainingos_db.upsert_daily_recovery_metric(
+                    connection,
+                    {
+                        "provider": "garmin",
+                        "metric_date": "2026-08-27",
+                        "sleep_score": 70,
+                        "training_readiness": 40,
+                    },
+                )
+                second_id = trainingos_db.upsert_daily_recovery_metric(
+                    connection,
+                    {
+                        "provider": "garmin",
+                        "metric_date": "2026-08-27",
+                        "sleep_score": 78,
+                        "training_readiness": 46,
+                    },
+                )
+                rows = connection.execute(
+                    """
+                    select *
+                    from daily_recovery_metrics
+                    where metric_date = '2026-08-27' and provider = 'garmin'
+                    """
+                ).fetchall()
+        self.assertEqual(first_id, second_id)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["sleep_score"], 78)
+        self.assertEqual(rows[0]["training_readiness"], 46)
+
+    def test_upsert_daily_health_metric_is_categorized_and_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "trainingos.sqlite"
+            trainingos_db.init_db(db_path)
+            with trainingos_db.connect(db_path) as connection:
+                first_id = trainingos_db.upsert_daily_health_metric(
+                    connection,
+                    "sleep",
+                    {
+                        "metric_date": "2026-11-19",
+                        "provider": "garmin",
+                        "deep_sleep_minutes": 60,
+                        "rem_sleep_minutes": 70,
+                    },
+                )
+                second_id = trainingos_db.upsert_daily_health_metric(
+                    connection,
+                    "sleep",
+                    {
+                        "metric_date": "2026-11-19",
+                        "provider": "garmin",
+                        "deep_sleep_minutes": 75,
+                        "rem_sleep_minutes": 70,
+                    },
+                )
+                row = connection.execute(
+                    "select * from daily_sleep_metrics where metric_date = '2026-11-19'"
+                ).fetchone()
+        self.assertEqual(first_id, second_id)
+        self.assertEqual(row["deep_sleep_minutes"], 75)
+        self.assertEqual(row["rem_sleep_minutes"], 70)
+
+    def test_upsert_daily_health_metric_rejects_unknown_category(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "trainingos.sqlite"
+            trainingos_db.init_db(db_path)
+            with trainingos_db.connect(db_path) as connection:
+                with self.assertRaisesRegex(ValueError, "unsupported daily health category"):
+                    trainingos_db.upsert_daily_health_metric(
+                        connection, "unknown", {"metric_date": "2026-11-19"}
+                    )
 
 
 if __name__ == "__main__":

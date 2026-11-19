@@ -1,6 +1,26 @@
 import unittest
 
-from scripts import garmin_activity_import
+from scripts import garmin_activity_import, garmin_provider
+
+
+class DummyOfficialActivityClient:
+    source_tool = garmin_provider.PERSONAL_SOURCE_TOOL
+
+    def get_activity(self, activity_id):
+        return {
+            "activityId": activity_id,
+            "summarizedExerciseSets": [
+                {
+                    "setNumber": 1,
+                    "weight": 85000,
+                    "repetitionCount": 8,
+                    "exercises": [{"category": "BENCH_PRESS"}],
+                }
+            ],
+        }
+
+    def get_activity_exercise_sets(self, activity_id):
+        return {"workouts": []}
 
 
 class GarminActivityImportTestCase(unittest.TestCase):
@@ -80,6 +100,17 @@ class GarminActivityImportTestCase(unittest.TestCase):
         self.assertIn("repetitionCount", garmin_activity_import.SET_FIELD_MAPPINGS["reps"])
         self.assertIn("weight", garmin_activity_import.SET_FIELD_MAPPINGS["weight_kg"])
         self.assertIn("averageHR", garmin_activity_import.ACTIVITY_FIELD_MAPPINGS["average_heart_rate"])
+
+    def test_fetch_payload_prefers_official_summarized_exercise_sets(self):
+        payload = garmin_activity_import.fetch_activity_payload(
+            DummyOfficialActivityClient(),
+            {"activityId": 123, "activityName": "Strength"},
+        )
+        normalized = garmin_activity_import.normalize_activity(payload)
+        self.assertEqual(payload["source_tool"], garmin_provider.PERSONAL_SOURCE_TOOL)
+        self.assertEqual(normalized["source_tool"], garmin_provider.PERSONAL_SOURCE_TOOL)
+        self.assertEqual(normalized["sets"][0]["weight_kg"], 85)
+        self.assertEqual(normalized["sets"][0]["reps"], 8)
 
 
 if __name__ == "__main__":
