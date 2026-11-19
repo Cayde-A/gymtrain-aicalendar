@@ -63,6 +63,12 @@ The adapter performs this sequence:
 4. upsert by `user_id,sync_month` using PostgREST conflict resolution;
 5. read back only `sync_month,payload_sha256`;
 6. mark the local batch `uploaded` only when the hash matches.
+7. when the local retention policy allows it, delete only the temporary package
+   whose month and SHA-256 match the confirmed uploaded batch.
+
+Cleanup refuses files outside the configured sync directory, symbolic links,
+invalid packages, hash mismatches, and batches without confirmed read-back. A
+missing package is harmless and reported as `not_found`.
 
 Failures store only a sanitized local status such as `auth_http_401`, `upload_http_403`, or `readback_hash_mismatch`. Provider response bodies and credentials are not persisted.
 

@@ -21,6 +21,7 @@ except ImportError:  # pragma: no cover - supports direct script execution.
 
 
 Requester = Callable[[str, str, dict[str, str], Any | None], tuple[int, Any]]
+DEFAULT_PACKAGE_ROOT = trainingos_monthly_sync_package.DEFAULT_OUTPUT_DIR
 
 
 def request_json(
@@ -81,6 +82,62 @@ def set_batch_status(
     )
 
 
+def cleanup_uploaded_package(
+    connection: Any,
+    package_path: Path,
+    sync_root: Path,
+    month: str,
+    digest: str,
+) -> dict[str, Any]:
+    """Delete a verified temporary package after confirmed remote read-back."""
+    policy = connection.execute(
+        """
+        select delete_sync_package_after_upload
+        from privacy_retention_policies
+        where athlete_id = ?
+        order by created_at desc limit 1
+        """,
+        (trainingos_db.DEFAULT_ATHLETE_ID,),
+    ).fetchone()
+    if policy is not None and not bool(policy[0]):
+        return {"status": "preserved_by_policy", "deleted": False}
+    expected_name = f"monthly_sync_{month}.json"
+    if package_path.name != expected_name or package_path.parent.resolve() != sync_root.resolve():
+        return {"status": "blocked_outside_sync_root", "deleted": False}
+    if package_path.is_symlink():
+        return {"status": "blocked_symlink", "deleted": False}
+    if not package_path.exists():
+        return {"status": "not_found", "deleted": False}
+    batch = connection.execute(
+        """
+        select status, summary_payload_hash
+        from monthly_sync_batches
+        where athlete_id = ? and sync_month = ?
+        """,
+        (trainingos_db.DEFAULT_ATHLETE_ID, month),
+    ).fetchone()
+    if batch is None or batch["status"] != "uploaded" or batch["summary_payload_hash"] != digest:
+        return {"status": "blocked_unconfirmed_batch", "deleted": False}
+    try:
+        local_package = json.loads(package_path.read_text(encoding="utf-8"))
+        trainingos_monthly_sync_package.validate_package(local_package)
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {"status": "blocked_invalid_package", "deleted": False}
+    if (
+        local_package.get("sync_month") != month
+        or trainingos_monthly_sync_package.payload_hash(local_package) != digest
+    ):
+        return {"status": "blocked_hash_mismatch", "deleted": False}
+    size_bytes = package_path.stat().st_size
+    try:
+        package_path.unlink()
+    except OSError:
+        return {"status": "delete_failed", "deleted": False}
+    if package_path.exists() or package_path.is_symlink():
+        return {"status": "delete_failed", "deleted": False}
+    return {"status": "deleted", "deleted": True, "deleted_bytes": size_bytes}
+
+
 def run_upload(
     connection: Any,
     package: dict[str, Any],
@@ -89,6 +146,8 @@ def run_upload(
     access_token: str | None,
     confirmed: bool,
     requester: Requester = request_json,
+    package_path: Path | None = None,
+    sync_root: Path = DEFAULT_PACKAGE_ROOT,
 ) -> tuple[int, dict[str, Any]]:
     trainingos_monthly_sync_package.validate_package(package)
     digest = trainingos_monthly_sync_package.payload_hash(package)
@@ -180,6 +239,11 @@ def run_upload(
             "uploaded": False,
         }
     set_batch_status(connection, batch_id, "uploaded")
+    cleanup = (
+        cleanup_uploaded_package(connection, package_path, sync_root, str(package["sync_month"]), digest)
+        if package_path is not None
+        else {"status": "not_requested", "deleted": False}
+    )
     return 0, {
         "status": "uploaded",
         "batch_id": batch_id,
@@ -187,6 +251,7 @@ def run_upload(
         "payload_sha256": digest,
         "readback_confirmed": True,
         "uploaded": True,
+        "package_cleanup": cleanup,
     }
 
 
@@ -196,6 +261,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--month", required=True, help="Month in YYYY-MM format.")
     parser.add_argument("--push", action="store_true", help="Enable the external write path.")
     parser.add_argument("--confirm", action="store_true", help="Confirm this specific upload.")
+    parser.add_argument(
+        "--package-root",
+        default=str(DEFAULT_PACKAGE_ROOT),
+        help="Directory containing the temporary monthly package eligible for verified cleanup.",
+    )
     return parser.parse_args()
 
 
@@ -227,6 +297,8 @@ def main() -> int:
             os.environ.get("SUPABASE_PUBLISHABLE_KEY"),
             os.environ.get("SUPABASE_ACCESS_TOKEN"),
             confirmed=args.confirm,
+            package_path=Path(args.package_root) / f"monthly_sync_{args.month}.json",
+            sync_root=Path(args.package_root),
         )
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return code

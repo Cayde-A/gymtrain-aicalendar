@@ -2,11 +2,18 @@
 
 ## Now
 
-- Create a Garmin Personal API key and live-verify seven recovery days plus two recent Strength activities against the legacy provider.
-- Add official FIT parsing only if Personal API activity details do not contain complete strength sets.
-- Add post-upload retention cleanup for temporary monthly sync packages.
+- Configure the first external AI provider and verify an actual review response through the local trigger policy.
+- Configure Google Calendar OAuth and verify one idempotent calendar write.
+- Configure a Supabase project and verify one confirmed monthly package upload and cleanup.
 
 ## Recently Completed
+
+- Live-verified official Personal API recovery reads and two recent Strength
+  activities. The Personal API summaries omitted sets, so the importer now
+  falls back to the official Garmin FIT SDK and recovered 65 sets (31 active)
+  with no missing reps, missing weights, abnormal weights, or unknown exercises.
+- Added verified post-upload cleanup for temporary monthly sync packages with
+  policy, path, symlink, batch-status, month, and SHA-256 gates.
 
 - Added the official Garmin Personal API read adapter with automatic selection, read/write capability separation, and legacy read fallback.
 - Added shared Garmin authentication and token-store selection.

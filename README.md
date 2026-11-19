@@ -130,7 +130,7 @@ TrainingOS now separates Garmin reads from Garmin writes:
 
 ```text
 Garmin Connect Personal API (official, preferred reads)
--> recovery metrics + activities + activity details + FIT download capability
+-> recovery metrics + activities + activity details + official FIT set decoding
 
 python-garminconnect (compatibility writes)
 -> upload + schedule + replace + device push
@@ -187,6 +187,11 @@ python3 scripts/garmin_activity_import.py --days 7 --limit 5
 ```
 
 Add `--strength-only` when the activity list contains multiple sport types and only strength sessions should be imported.
+
+If Personal API activity details omit Strength sets, the importer automatically
+uses the official Garmin FIT SDK against the downloaded activity file. The
+normalized session keeps source provenance, and all existing correction,
+quality, same-day grouping, and PR rules still apply.
 
 Open the local correction page:
 

@@ -7,6 +7,8 @@ This MVP tests whether TrainingOS can authenticate through Garmin's official Per
 ## Files
 
 - `scripts/garmin_import.py`: interactive local Garmin import script.
+- `scripts/garmin_activity_import.py`: completed-activity importer with official FIT fallback.
+- `scripts/garmin_fit_activity.py`: bounded Garmin FIT strength-set decoder.
 - `requirements.txt`: Python dependency list.
 - `exports/garmin/normalized/daily_recovery_metrics.json`: generated normalized output, ignored by Git.
 - `exports/garmin/normalized/raw_schema_summary.json`: generated field-path/type summary, ignored by Git.
@@ -77,6 +79,18 @@ Run a 30-day import and save raw Garmin responses:
 ```bash
 python3 scripts/garmin_import.py --days 30 --include-raw
 ```
+
+Import recent completed Strength activities:
+
+```bash
+python3 scripts/garmin_activity_import.py --days 30 --strength-only --limit 5
+```
+
+The importer first uses Personal API activity details. If they omit strength
+sets, it downloads the activity ZIP in memory and decodes its single FIT file
+with Garmin's official FIT SDK. The ZIP/FIT is size-bounded, is never extracted
+to disk, and the normalized session records
+`garmin-connect-personal-api-python+garmin-fit-sdk` as its source.
 
 ## Security
 

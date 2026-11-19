@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 
 from scripts import garmin_activity_import, garmin_provider
 
@@ -21,6 +22,19 @@ class DummyOfficialActivityClient:
 
     def get_activity_exercise_sets(self, activity_id):
         return {"workouts": []}
+
+
+class DummyOfficialFitClient:
+    source_tool = garmin_provider.PERSONAL_SOURCE_TOOL
+
+    def get_activity(self, activity_id):
+        return {"activityId": activity_id}
+
+    def get_activity_exercise_sets(self, activity_id):
+        return None
+
+    def download_activity(self, activity_id):
+        return b"zip-bytes"
 
 
 class GarminActivityImportTestCase(unittest.TestCase):
@@ -111,6 +125,31 @@ class GarminActivityImportTestCase(unittest.TestCase):
         self.assertEqual(normalized["source_tool"], garmin_provider.PERSONAL_SOURCE_TOOL)
         self.assertEqual(normalized["sets"][0]["weight_kg"], 85)
         self.assertEqual(normalized["sets"][0]["reps"], 8)
+
+    def test_fetch_payload_uses_fit_fallback_when_official_details_have_no_sets(self):
+        with mock.patch.object(
+            garmin_activity_import.garmin_fit_activity,
+            "decode_activity_zip",
+            return_value={
+                "exerciseSets": [
+                    {
+                        "exerciseName": "LAT_PULLDOWN",
+                        "setNumber": 1,
+                        "setType": "active",
+                        "weight": 40,
+                        "repetitionCount": 10,
+                    }
+                ]
+            },
+        ):
+            payload = garmin_activity_import.fetch_activity_payload(
+                DummyOfficialFitClient(), {"activityId": 123, "activityName": "Strength"}
+            )
+        normalized = garmin_activity_import.normalize_activity(payload)
+        self.assertTrue(payload["fit_fallback_used"])
+        self.assertIn("garmin-fit-sdk", normalized["source_tool"])
+        self.assertEqual(normalized["sets"][0]["exercise_name"], "LAT_PULLDOWN")
+        self.assertEqual(normalized["sets"][0]["reps"], 10)
 
 
 if __name__ == "__main__":

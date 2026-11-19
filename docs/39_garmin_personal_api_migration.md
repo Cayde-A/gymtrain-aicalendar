@@ -55,7 +55,7 @@ before expiry.
 - activity search and details;
 - summarized strength exercise sets when supplied by activity details;
 - associated workout metadata;
-- original activity ZIP/FIT download capability.
+- original activity ZIP/FIT download and official FIT SDK set decoding.
 
 The current Personal API does not expose a dedicated Training Readiness or
 Recovery Time endpoint. TrainingOS first imports all supported official fields,
@@ -91,9 +91,16 @@ Before disabling legacy reads:
 6. run one midnight pipeline without Garmin writes;
 7. keep legacy read fallback until all checks pass.
 
-If summarized sets are incomplete, download the official activity file and add
-a FIT parser behind the same activity-normalization boundary. Do not bypass the
-correction and data-quality workflow.
+The summarized Personal API responses observed in live Strength tests omitted
+sets. TrainingOS now downloads the official activity ZIP in memory and decodes
+its single size-bounded FIT file with `garmin-fit-sdk`, behind the existing
+activity-normalization boundary. A two-activity verification recovered 65
+total sets and 31 active sets without missing reps, missing weights, abnormal
+weights, or unknown exercise mappings. The correction and data-quality
+workflow still runs after this fallback.
+
+Exact seven-day/two-activity parity against the legacy adapter remains a
+migration gate before legacy reads are removed.
 
 ## Write Path
 
@@ -111,3 +118,4 @@ not reuse a user's Personal API key for other users.
 - Garmin Personal API FAQ: <https://developer.garmin.com/gc-developer-program/personal/personal-faq>
 - Garmin Personal API Swagger: <https://developer.garmin.com/gc-developer-program/personal/swagger-docs/>
 - Official Python client: <https://github.com/garmin/connect-personal-api-python>
+- Garmin FIT SDK: <https://developer.garmin.com/fit/get-the-sdk/>

@@ -8,12 +8,20 @@ import datetime as dt
 import json
 import os
 import sys
+import zipfile
 from pathlib import Path
 from typing import Any
 
 try:
-    from . import garmin_import, garmin_provider, trainingos_db, trainingos_observability
+    from . import (
+        garmin_fit_activity,
+        garmin_import,
+        garmin_provider,
+        trainingos_db,
+        trainingos_observability,
+    )
 except ImportError:  # pragma: no cover - supports direct script execution.
+    import garmin_fit_activity  # type: ignore
     import garmin_import  # type: ignore
     import garmin_provider  # type: ignore
     import trainingos_db  # type: ignore
@@ -130,6 +138,8 @@ def fetch_activity_payload(client: Any, activity: dict[str, Any]) -> dict[str, A
     external_id = activity_id(activity)
     details = None
     exercise_sets = None
+    fit_fallback_used = False
+    fit_fallback_error = None
     if external_id:
         details_result = garmin_import.call_first_available(
             client,
@@ -156,11 +166,30 @@ def fetch_activity_payload(client: Any, activity: dict[str, Any]) -> dict[str, A
             )
             if summarized_sets:
                 exercise_sets = summarized_sets
+        if (
+            not exercise_sets
+            and garmin_provider.client_source_tool(client) == garmin_provider.PERSONAL_SOURCE_TOOL
+            and callable(getattr(client, "download_activity", None))
+        ):
+            try:
+                fit_result = garmin_fit_activity.decode_activity_zip(
+                    client.download_activity(external_id)
+                )
+                exercise_sets = fit_result.get("exerciseSets") or None
+                fit_fallback_used = bool(exercise_sets)
+            except (OSError, RuntimeError, ValueError, zipfile.BadZipFile) as exc:
+                fit_fallback_error = type(exc).__name__
     return {
-        "source_tool": garmin_provider.client_source_tool(client),
+        "source_tool": (
+            f"{garmin_provider.client_source_tool(client)}+garmin-fit-sdk"
+            if fit_fallback_used
+            else garmin_provider.client_source_tool(client)
+        ),
         "summary": activity,
         "details": details,
         "exercise_sets": exercise_sets,
+        "fit_fallback_used": fit_fallback_used,
+        "fit_fallback_error": fit_fallback_error,
     }
 
 
@@ -323,6 +352,7 @@ def main() -> int:
 
     trainingos_db.init_db(Path(args.db))
     imported: list[dict[str, Any]] = []
+    fit_fallback_count = 0
     with trainingos_db.connect(Path(args.db)) as connection:
         for activity in activities:
             external_id = activity_id(activity) or trainingos_db.new_id("activity")
@@ -334,6 +364,8 @@ def main() -> int:
                 },
             )
             payload = fetch_activity_payload(client, activity)
+            if payload.get("fit_fallback_used"):
+                fit_fallback_count += 1
             raw_path = None
             if args.include_raw:
                 raw_path_obj = RAW_ACTIVITY_DIR / f"activity_{external_id}.json"
@@ -350,13 +382,20 @@ def main() -> int:
                     "local_session_id": session_id,
                     "activity_name": normalized.get("activity_name"),
                     "set_count": len(normalized.get("sets", [])),
+                    "source_tool": normalized.get("source_tool"),
+                    "fit_fallback_used": bool(payload.get("fit_fallback_used")),
+                    "fit_fallback_error": payload.get("fit_fallback_error"),
                 },
             )
 
     write_json(NORMALIZED_ACTIVITY_DIR / "completed_activities.json", imported)
     trainingos_observability.record_event(
         "garmin_activity_import_completed",
-        details={"imported_count": len(imported), "db_path": args.db},
+        details={
+            "imported_count": len(imported),
+            "fit_fallback_count": fit_fallback_count,
+            "db_path": args.db,
+        },
     )
     print(f"Imported {len(imported)} Garmin completed activities into local SQLite.")
     print(f"Database: {args.db}")

@@ -16,6 +16,9 @@
 - Added categorized local daily health tables for sleep, HRV, energy, vitals, and readiness while preserving the compact recovery contract.
 - Added extended Garmin field normalization and idempotent writes for sleep stages, HRV baseline, Body Battery flow, movement, calories, vital signs, and readiness factors.
 - Added Dashboard visualization for 14-day recovery trends, sleep-stage composition, and categorized daily health indicators with an accessible data-table fallback.
+- Added verified cleanup of temporary monthly sync packages after Supabase hash read-back, guarded by local retention policy, safe-path checks, and package SHA-256 matching.
+- Added a bounded official FIT SDK fallback for Personal API strength activities whose summary/detail responses omit exercise sets.
+- Live-verified two official Personal API Strength imports: 65 total sets, 31 active sets, and no missing reps, missing weights, abnormal weights, or unknown exercise mappings.
 
 ### Changed
 

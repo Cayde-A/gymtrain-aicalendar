@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import json
 from pathlib import Path
 
 from scripts import trainingos_db, trainingos_monthly_sync_package, trainingos_supabase_sync
@@ -109,6 +110,80 @@ class TrainingOSSupabaseSyncTestCase(unittest.TestCase):
         self.assertNotIn("private", str(calls[1][3]))
         self.assertEqual(calls[0][2]["apikey"], "publishable")
         self.assertEqual(calls[0][2]["Authorization"], "Bearer access-token")
+
+    def test_confirmed_upload_deletes_only_matching_temporary_package(self):
+        def requester(method, url, headers, payload):
+            if url.endswith("/auth/v1/user"):
+                return 200, {"id": "00000000-0000-0000-0000-000000000001"}
+            if method == "POST":
+                return 201, []
+            return 200, [{"sync_month": "2026-10", "payload_sha256": payload_digest}]
+
+        package_root = Path(self.tempdir.name) / "sync"
+        package_root.mkdir()
+        with trainingos_db.connect(self.db_path) as connection:
+            package = self.package(connection)
+            payload_digest = trainingos_monthly_sync_package.payload_hash(package)
+            package_path = package_root / "monthly_sync_2026-10.json"
+            package_path.write_text(json.dumps(package), encoding="utf-8")
+            code, result = trainingos_supabase_sync.run_upload(
+                connection,
+                package,
+                "https://project.supabase.co",
+                "publishable",
+                "access-token",
+                True,
+                requester,
+                package_path=package_path,
+                sync_root=package_root,
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(result["package_cleanup"]["status"], "deleted")
+        self.assertTrue(result["package_cleanup"]["deleted"])
+        self.assertFalse(package_path.exists())
+
+    def test_cleanup_preserves_hash_mismatch_and_symlink(self):
+        package_root = Path(self.tempdir.name) / "sync"
+        package_root.mkdir()
+        with trainingos_db.connect(self.db_path) as connection:
+            package = self.package(connection)
+            digest = trainingos_monthly_sync_package.payload_hash(package)
+            trainingos_supabase_sync.set_batch_status(connection, "monthly_sync_2026-10", "uploaded")
+            package_path = package_root / "monthly_sync_2026-10.json"
+            changed = dict(package)
+            changed["session_count"] = 999
+            package_path.write_text(json.dumps(changed), encoding="utf-8")
+            mismatch = trainingos_supabase_sync.cleanup_uploaded_package(
+                connection, package_path, package_root, "2026-10", digest
+            )
+            package_path.unlink()
+            target = Path(self.tempdir.name) / "outside.json"
+            target.write_text(json.dumps(package), encoding="utf-8")
+            package_path.symlink_to(target)
+            symlink = trainingos_supabase_sync.cleanup_uploaded_package(
+                connection, package_path, package_root, "2026-10", digest
+            )
+        self.assertEqual(mismatch["status"], "blocked_hash_mismatch")
+        self.assertEqual(symlink["status"], "blocked_symlink")
+        self.assertTrue(target.exists())
+
+    def test_cleanup_obeys_retention_policy(self):
+        package_root = Path(self.tempdir.name) / "sync"
+        package_root.mkdir()
+        with trainingos_db.connect(self.db_path) as connection:
+            package = self.package(connection)
+            digest = trainingos_monthly_sync_package.payload_hash(package)
+            trainingos_supabase_sync.set_batch_status(connection, "monthly_sync_2026-10", "uploaded")
+            connection.execute(
+                "update privacy_retention_policies set delete_sync_package_after_upload = 0"
+            )
+            package_path = package_root / "monthly_sync_2026-10.json"
+            package_path.write_text(json.dumps(package), encoding="utf-8")
+            result = trainingos_supabase_sync.cleanup_uploaded_package(
+                connection, package_path, package_root, "2026-10", digest
+            )
+        self.assertEqual(result["status"], "preserved_by_policy")
+        self.assertTrue(package_path.exists())
 
     def test_hash_mismatch_marks_batch_failed_without_remote_body(self):
         def requester(method, url, headers, payload):

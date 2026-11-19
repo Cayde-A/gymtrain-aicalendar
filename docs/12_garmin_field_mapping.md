@@ -61,6 +61,7 @@ Completed Garmin activities are imported through:
 get_activities_by_date
 -> get_activity / get_activity_details
 -> get_activity_exercise_sets
+-> activity ZIP/FIT fallback when no summarized sets are returned
 ```
 
 ### Activity Summary
@@ -87,6 +88,23 @@ get_activities_by_date
 | `weight_kg` | `weight`, `weightKg`, `weightInKg`, `weightKilograms` | if value is `>= 1000`, treat as grams and divide by `1000` |
 | `reps` | `reps`, `repetitions`, `repCount`, `repetitionCount` | integer |
 | `rpe` | `rpe`, `ratingOfPerceivedExertion` | numeric |
+
+### Official FIT Fallback
+
+When Personal API details have no set list, TrainingOS decodes Garmin FIT
+`set_mesgs` through `garmin-fit-sdk` and maps them through the same normalized
+boundary:
+
+| TrainingOS Field | FIT Set Message | Conversion / Rule |
+|---|---|---|
+| `exercise_name` | `category` + `category_subtype` | resolve with the official FIT profile exercise enum |
+| `set_order` | message order | one-based integer; preserves rest steps |
+| `set_type` | `set_type` | `active` or `rest` |
+| `weight_kg` | `weight` | FIT SDK already returns kilograms; no conversion below 1000 |
+| `reps` | `repetitions` | integer |
+
+FIT decoding is a transport fallback only. Correction, quality checks,
+same-day grouping, and PR calculation remain unchanged.
 
 Observed Garmin behavior:
 
