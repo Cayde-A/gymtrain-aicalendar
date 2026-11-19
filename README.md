@@ -222,6 +222,11 @@ sleep-stage composition, and detailed daily indicators. The compact
 Dashboard also shows the first-training waiting state when no usable completed
 session exists, so an interruption or empty history is not reported as a
 generic analysis failure.
+
+The Dashboard follows the browser/system language through `Accept-Language`:
+Chinese locales render Simplified Chinese and other locales render English.
+For deterministic testing or a temporary override, open `/?lang=zh` or
+`/?lang=en`. Garmin manual-sync feedback preserves the selected language.
 `daily_recovery_metrics` summary remains the planning-engine contract; detailed
 category rows stay local and are not included in the default monthly cloud
 upload.

@@ -80,9 +80,9 @@ self.addEventListener('fetch', (event) => {
 """
 
 
-def page(title: str, body: str) -> str:
+def page(title: str, body: str, language: str = "zh-CN") -> str:
     return f"""<!doctype html>
-<html lang="zh-CN">
+<html lang="{safe(language)}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -210,19 +210,75 @@ def value_or(value: object, fallback: str = "无") -> object:
     return fallback if value is None else value
 
 
-def format_sleep_duration(value: object) -> str:
+def format_sleep_duration(value: object, locale: str = "zh") -> str:
     if value is None:
-        return "无"
+        return dashboard_text(locale, "无")
     try:
         minutes = max(0, int(value))
     except (TypeError, ValueError):
-        return "无"
+        return dashboard_text(locale, "无")
     hours, remainder = divmod(minutes, 60)
-    return f"{hours} 小时 {remainder} 分"
+    return (
+        f"{hours} 小时 {remainder} 分"
+        if locale == "zh"
+        else f"{hours} hr {remainder} min"
+    )
 
 
-def nav() -> str:
-    return """<nav><a href="/">总览</a><a href="/training">训练日</a><a href="/entry">录入</a><a href="/body">身体指标</a><a href="/settings">触发设置</a><a href="/debug">调试观测</a></nav>"""
+DASHBOARD_EN = {
+    "总览": "Overview", "训练日": "Training Days", "录入": "Entry", "身体指标": "Body Metrics",
+    "触发设置": "Triggers", "调试观测": "Debug", "无": "None", "查看": "View",
+    "尚未找到可作为分析锚点的历史训练。恢复指标会继续同步，TrainingOS 将等待你完成第一次训练后再进行解析、AI 复盘和次日计划。": "No usable training history was found. Recovery metrics will keep syncing, and TrainingOS will wait for your first completed workout before analysis, AI review, or next-day planning.",
+    "已找到训练活动，但没有有效训练组。请先重新同步或校正第一次训练记录，系统暂不进行 AI 解析。": "A training activity was found, but it has no active sets. Resync or correct the first workout before AI analysis.",
+    "TrainingOS 总览": "TrainingOS Overview", "近 30 天训练日": "Training days (30d)",
+    "训练次数": "Sessions", "有效组": "Active sets", "训练量 kg": "Volume kg",
+    "PR 记录": "PR records", "数据缺失": "Missing fields", "今日状态": "Today's status",
+    "立即读取 Garmin": "Sync Garmin now", "读取中...": "Syncing...", "恢复日期": "Recovery date",
+    "睡眠分数": "Sleep score", "睡眠时长": "Sleep duration", "HRV 状态": "HRV status",
+    "训练准备度": "Training readiness", "体重 kg": "Body weight kg", "周期": "Cycle",
+    "未开始": "Not started", "14 天恢复趋势": "14-day recovery trend", "睡眠构成": "Sleep stages",
+    "详细健康指标": "Detailed health metrics", "最近训练日": "Recent training days",
+    "日期": "Date", "活动数": "Activities", "训练内容": "Training", "暂无训练记录。": "No training records.",
+    "当前 PR": "Current PRs", "动作": "Exercise", "最佳组": "Best set", "暂无 PR 状态。": "No PR state.",
+    "最近计划流程": "Recent planning runs", "目标日期": "Target date", "状态": "Status",
+    "主肌群": "Primary group", "恢复调整": "Recovery adjustment", "暂无计划流程记录。": "No planning runs.",
+    "暂无 14 天恢复趋势数据。": "No 14-day recovery trend data.", "睡眠": "Sleep", "准备度": "Readiness",
+    "查看趋势数据": "View trend data", "最近十四天睡眠分数、Body Battery 和训练准备度趋势": "Sleep score, Body Battery, and training readiness over the last 14 days",
+    "深睡": "Deep", "浅睡": "Light", "清醒": "Awake", "分": "min",
+    "暂无睡眠阶段明细。": "No sleep-stage details.", "睡眠阶段构成": "Sleep-stage composition",
+    "夜间 HRV 均值 ms": "Overnight HRV average ms", "静息心率": "Resting heart rate",
+    "平均压力": "Average stress", "平均呼吸 次/分": "Average respiration /min", "平均血氧 %": "Average pulse ox %",
+    "步数": "Steps", "活动热量 kcal": "Active calories kcal", "Body Battery 充/耗": "Body Battery charged/drained",
+    "准备度级别": "Readiness level", "暂无分类健康明细。": "No categorized health details.",
+    "Garmin 读取超时，请稍后重试或查看调试观测。": "Garmin sync timed out. Retry later or check Debug.",
+    "无法启动 Garmin 读取进程，请查看调试观测。": "Could not start Garmin sync. Check Debug.",
+    "Garmin 读取失败，请查看调试观测后重试。": "Garmin sync failed. Check Debug before retrying.",
+    "Garmin 已响应，但今天尚无可显示的恢复指标。": "Garmin responded, but no recovery metrics are available for today.",
+}
+
+
+def resolve_locale(accept_language: str | None = None, override: str | None = None) -> str:
+    requested = (override or "").strip().lower()
+    if requested in {"zh", "zh-cn", "zh-hans", "zh-tw", "zh-hant"}:
+        return "zh"
+    if requested in {"en", "en-us", "en-au", "en-gb"}:
+        return "en"
+    first = (accept_language or "").split(",", 1)[0].strip().lower()
+    return "zh" if first.startswith("zh") else "en"
+
+
+def dashboard_text(locale: str, source: str) -> str:
+    return DASHBOARD_EN.get(source, source) if locale == "en" else source
+
+
+def nav(locale: str = "zh") -> str:
+    t = lambda value: dashboard_text(locale, value)
+    suffix = "?lang=en" if locale == "en" else "?lang=zh"
+    return (
+        f'<nav><a href="/{suffix}">{t("总览")}</a><a href="/training">{t("训练日")}</a>'
+        f'<a href="/entry">{t("录入")}</a><a href="/body">{t("身体指标")}</a>'
+        f'<a href="/settings">{t("触发设置")}</a><a href="/debug">{t("调试观测")}</a></nav>'
+    )
 
 
 def option(value: str, current: object, label: str) -> str:
@@ -230,17 +286,18 @@ def option(value: str, current: object, label: str) -> str:
     return f'<option value="{safe(value)}"{selected}>{safe(label)}</option>'
 
 
-def recovery_trend_chart(rows: list[dict[str, object]]) -> str:
+def recovery_trend_chart(rows: list[dict[str, object]], locale: str = "zh") -> str:
+    t = lambda value: dashboard_text(locale, value)
     if not rows:
-        return '<div class="empty">暂无 14 天恢复趋势数据。</div>'
+        return f'<div class="empty">{t("暂无 14 天恢复趋势数据。")}</div>'
     days = []
     table_rows = []
     for row in rows:
         bars = []
         for field, class_name, label in (
-            ("sleep_score", "sleep", "睡眠"),
+            ("sleep_score", "sleep", t("睡眠")),
             ("body_battery", "battery", "Body Battery"),
-            ("training_readiness", "readiness", "准备度"),
+            ("training_readiness", "readiness", t("准备度")),
         ):
             value = row.get(field)
             height = min(100.0, max(0.0, float(value))) if value is not None else 0
@@ -255,23 +312,24 @@ def recovery_trend_chart(rows: list[dict[str, object]]) -> str:
             f'<span class="trend-date">{safe(date[5:])}</span></div>'
         )
         table_rows.append(
-            f'<tr><td data-label="日期">{safe(date)}</td>'
-            f'<td data-label="睡眠分数">{safe(value_or(row.get("sleep_score")))}</td>'
-            f'<td data-label="Body Battery">{safe(value_or(row.get("body_battery")))}</td>'
-            f'<td data-label="训练准备度">{safe(value_or(row.get("training_readiness")))}</td></tr>'
+            f'<tr><td data-label="{t("日期")}">{safe(date)}</td>'
+            f'<td data-label="{t("睡眠分数")}">{safe(value_or(row.get("sleep_score"), t("无")))}</td>'
+            f'<td data-label="Body Battery">{safe(value_or(row.get("body_battery"), t("无")))}</td>'
+            f'<td data-label="{t("训练准备度")}">{safe(value_or(row.get("training_readiness"), t("无")))}</td></tr>'
         )
-    return f'''<div class="chart-panel" role="img" aria-label="最近十四天睡眠分数、Body Battery 和训练准备度趋势">
+    return f'''<div class="chart-panel" role="img" aria-label="{t("最近十四天睡眠分数、Body Battery 和训练准备度趋势")}">
       <div class="chart-legend">
-        <span class="legend-key"><span class="legend-swatch" style="background:#2563eb"></span>睡眠分数</span>
+        <span class="legend-key"><span class="legend-swatch" style="background:#2563eb"></span>{t("睡眠分数")}</span>
         <span class="legend-key"><span class="legend-swatch" style="background:#16a34a"></span>Body Battery</span>
-        <span class="legend-key"><span class="legend-swatch" style="background:#d97706"></span>训练准备度</span>
+        <span class="legend-key"><span class="legend-swatch" style="background:#d97706"></span>{t("训练准备度")}</span>
       </div>
       <div class="trend-chart">{"".join(days)}</div>
-      <details><summary>查看趋势数据</summary><table><thead><tr><th>日期</th><th>睡眠分数</th><th>Body Battery</th><th>训练准备度</th></tr></thead><tbody>{"".join(table_rows)}</tbody></table></details>
+      <details><summary>{t("查看趋势数据")}</summary><table><thead><tr><th>{t("日期")}</th><th>{t("睡眠分数")}</th><th>Body Battery</th><th>{t("训练准备度")}</th></tr></thead><tbody>{"".join(table_rows)}</tbody></table></details>
     </div>'''
 
 
-def sleep_stage_chart(record: dict[str, object] | None) -> str:
+def sleep_stage_chart(record: dict[str, object] | None, locale: str = "zh") -> str:
+    t = lambda value: dashboard_text(locale, value)
     record = record or {}
     stages = [
         ("deep_sleep_minutes", "deep", "深睡"),
@@ -282,19 +340,20 @@ def sleep_stage_chart(record: dict[str, object] | None) -> str:
     values = [max(0, int(record.get(field) or 0)) for field, _, _ in stages]
     total = sum(values)
     if total == 0:
-        return '<div class="empty">暂无睡眠阶段明细。</div>'
+        return f'<div class="empty">{t("暂无睡眠阶段明细。")}</div>'
     segments = []
     legend = []
     for (field, class_name, label), value in zip(stages, values):
         percent = value / total * 100
         segments.append(
-            f'<span class="sleep-segment {class_name}" style="width:{percent:.2f}%" title="{safe(label)} {value} 分"></span>'
+            f'<span class="sleep-segment {class_name}" style="width:{percent:.2f}%" title="{safe(t(label))} {value} {t("分")}"></span>'
         )
-        legend.append(f'<span class="legend-key">{safe(label)} {value} 分</span>')
-    return f'<div class="chart-panel"><div class="sleep-stack" aria-label="睡眠阶段构成">{"".join(segments)}</div><div class="chart-legend" style="margin:12px 0 0">{"".join(legend)}</div></div>'
+        legend.append(f'<span class="legend-key">{safe(t(label))} {value} {t("分")}</span>')
+    return f'<div class="chart-panel"><div class="sleep-stack" aria-label="{t("睡眠阶段构成")}">{"".join(segments)}</div><div class="chart-legend" style="margin:12px 0 0">{"".join(legend)}</div></div>'
 
 
-def health_detail_cards(details: dict[str, dict[str, object] | None]) -> str:
+def health_detail_cards(details: dict[str, dict[str, object] | None], locale: str = "zh") -> str:
+    t = lambda value: dashboard_text(locale, value)
     hrv = details.get("hrv") or {}
     energy = details.get("energy") or {}
     vitals = details.get("vitals") or {}
@@ -314,9 +373,9 @@ def health_detail_cards(details: dict[str, dict[str, object] | None]) -> str:
         ("准备度级别", readiness.get("level")),
     )
     if not any(value is not None for _, value in items):
-        return '<div class="empty">暂无分类健康明细。</div>'
+        return f'<div class="empty">{t("暂无分类健康明细。")}</div>'
     return '<div class="summary">' + ''.join(
-        f'<div class="field"><label>{safe(label)}</label><strong>{safe(value_or(value))}</strong></div>'
+        f'<div class="field"><label>{safe(t(label))}</label><strong>{safe(value_or(value, t("无")))}</strong></div>'
         for label, value in items
     ) + '</div>'
 
@@ -335,7 +394,9 @@ class ReviewServer:
             "<h1>TrainingOS</h1><div class='empty'>当前无法连接本地服务。恢复连接后重新打开页面。</div>",
         )
 
-    def dashboard_page(self, notice: str = "", notice_error: bool = False) -> str:
+    def dashboard_page(self, notice: str = "", notice_error: bool = False, locale: str = "zh") -> str:
+        locale = resolve_locale(override=locale)
+        t = lambda value: dashboard_text(locale, value)
         with self.connection() as connection:
             snapshot = trainingos_dashboard.dashboard_snapshot(connection)
         training = snapshot["training"]
@@ -349,7 +410,7 @@ class ReviewServer:
             f"<tr><td>{safe(item.get('training_date'))}</td>"
             f"<td>{safe(item.get('session_count'))}</td>"
             f"<td>{safe(item.get('activity_names'))}</td>"
-            f"<td><a href='/day?date={safe(item.get('training_date'))}'>查看</a></td></tr>"
+            f"<td><a href='/day?date={safe(item.get('training_date'))}'>{t('查看')}</a></td></tr>"
             for item in snapshot["recent_training_days"]
         )
         pipeline_rows = "".join(
@@ -382,50 +443,59 @@ class ReviewServer:
                 '<div class="notice error">已找到训练活动，但没有有效训练组。请先重新同步或校正第一次训练记录，'
                 '系统暂不进行 AI 解析。</div>'
             )
-        body = f"""{nav()}
-        <h1>TrainingOS 总览</h1>
+        if anchor_notice:
+            for source in (
+                "尚未找到可作为分析锚点的历史训练。恢复指标会继续同步，TrainingOS 将等待你完成第一次训练后再进行解析、AI 复盘和次日计划。",
+                "已找到训练活动，但没有有效训练组。请先重新同步或校正第一次训练记录，系统暂不进行 AI 解析。",
+            ):
+                anchor_notice = anchor_notice.replace(source, t(source))
+        lang_query = "en" if locale == "en" else "zh"
+        body = f"""{nav(locale)}
+        <h1>{t('TrainingOS 总览')}</h1>
         {notice_html}
         {anchor_notice}
         <div class="summary">
-          <div class="field"><label>近 30 天训练日</label><strong>{safe(training['training_days'])}</strong></div>
-          <div class="field"><label>训练次数</label><strong>{safe(training['session_count'])}</strong></div>
-          <div class="field"><label>有效组</label><strong>{safe(training['set_count'])}</strong></div>
-          <div class="field"><label>训练量 kg</label><strong>{safe(training['volume_kg'])}</strong></div>
-          <div class="field"><label>PR 记录</label><strong>{safe(training['pr_record_count'])}</strong></div>
-          <div class="field"><label>数据缺失</label><strong>{safe(training['missing_reps'] + training['missing_weight'])}</strong></div>
+          <div class="field"><label>{t('近 30 天训练日')}</label><strong>{safe(training['training_days'])}</strong></div>
+          <div class="field"><label>{t('训练次数')}</label><strong>{safe(training['session_count'])}</strong></div>
+          <div class="field"><label>{t('有效组')}</label><strong>{safe(training['set_count'])}</strong></div>
+          <div class="field"><label>{t('训练量 kg')}</label><strong>{safe(training['volume_kg'])}</strong></div>
+          <div class="field"><label>{t('PR 记录')}</label><strong>{safe(training['pr_record_count'])}</strong></div>
+          <div class="field"><label>{t('数据缺失')}</label><strong>{safe(training['missing_reps'] + training['missing_weight'])}</strong></div>
         </div>
         <div class="section-heading">
-          <h2>今日状态</h2>
-          <form method="post" action="/garmin/sync" data-disable-on-submit>
-            <button type="submit" data-loading-text="读取中...">立即读取 Garmin</button>
+          <h2>{t('今日状态')}</h2>
+          <form method="post" action="/garmin/sync?lang={lang_query}" data-disable-on-submit>
+            <button type="submit" data-loading-text="{t('读取中...')}">{t('立即读取 Garmin')}</button>
           </form>
         </div>
         <div class="summary">
-          <div class="field"><label>恢复日期</label><strong>{safe(value_or(recovery.get('metric_date')))}</strong></div>
-          <div class="field"><label>睡眠分数</label><strong>{safe(value_or(recovery.get('sleep_score')))}</strong></div>
-          <div class="field"><label>睡眠时长</label><strong>{safe(format_sleep_duration(recovery.get('sleep_duration_minutes')))}</strong></div>
-          <div class="field"><label>HRV 状态</label><strong>{safe(value_or(recovery.get('hrv_status')))}</strong></div>
-          <div class="field"><label>Body Battery</label><strong>{safe(value_or(recovery.get('body_battery')))}</strong></div>
-          <div class="field"><label>训练准备度</label><strong>{safe(value_or(recovery.get('training_readiness')))}</strong></div>
-          <div class="field"><label>体重 kg</label><strong>{safe(value_or(body_values.get('body_weight_kg')))}</strong></div>
-          <div class="field"><label>周期</label><strong>{safe(('W' + str(cycle.get('week')) + ' ' + str(cycle.get('phase'))) if cycle else '未开始')}</strong></div>
+          <div class="field"><label>{t('恢复日期')}</label><strong>{safe(value_or(recovery.get('metric_date'), t('无')))}</strong></div>
+          <div class="field"><label>{t('睡眠分数')}</label><strong>{safe(value_or(recovery.get('sleep_score'), t('无')))}</strong></div>
+          <div class="field"><label>{t('睡眠时长')}</label><strong>{safe(format_sleep_duration(recovery.get('sleep_duration_minutes'), locale))}</strong></div>
+          <div class="field"><label>{t('HRV 状态')}</label><strong>{safe(value_or(recovery.get('hrv_status'), t('无')))}</strong></div>
+          <div class="field"><label>Body Battery</label><strong>{safe(value_or(recovery.get('body_battery'), t('无')))}</strong></div>
+          <div class="field"><label>{t('训练准备度')}</label><strong>{safe(value_or(recovery.get('training_readiness'), t('无')))}</strong></div>
+          <div class="field"><label>{t('体重 kg')}</label><strong>{safe(value_or(body_values.get('body_weight_kg'), t('无')))}</strong></div>
+          <div class="field"><label>{t('周期')}</label><strong>{safe(('W' + str(cycle.get('week')) + ' ' + str(cycle.get('phase'))) if cycle else t('未开始'))}</strong></div>
         </div>
-        <h2>14 天恢复趋势</h2>
-        {recovery_trend_chart(snapshot['recovery_trends'])}
-        <h2>睡眠构成</h2>
-        {sleep_stage_chart(health_details.get('sleep'))}
-        <h2>详细健康指标</h2>
-        {health_detail_cards(health_details)}
-        <h2>最近训练日</h2>
-        {('<table><thead><tr><th>日期</th><th>活动数</th><th>训练内容</th><th></th></tr></thead><tbody>' + day_rows + '</tbody></table>') if day_rows else '<div class="empty">暂无训练记录。</div>'}
-        <h2>当前 PR</h2>
-        {('<table><thead><tr><th>动作</th><th>e1RM kg</th><th>最佳组</th><th>日期</th></tr></thead><tbody>' + pr_rows + '</tbody></table>') if pr_rows else '<div class="empty">暂无 PR 状态。</div>'}
-        <h2>最近计划流程</h2>
-        {('<table><thead><tr><th>目标日期</th><th>状态</th><th>主肌群</th><th>恢复调整</th></tr></thead><tbody>' + pipeline_rows + '</tbody></table>') if pipeline_rows else '<div class="empty">暂无计划流程记录。</div>'}
+        <h2>{t('14 天恢复趋势')}</h2>
+        {recovery_trend_chart(snapshot['recovery_trends'], locale)}
+        <h2>{t('睡眠构成')}</h2>
+        {sleep_stage_chart(health_details.get('sleep'), locale)}
+        <h2>{t('详细健康指标')}</h2>
+        {health_detail_cards(health_details, locale)}
+        <h2>{t('最近训练日')}</h2>
+        {('<table><thead><tr><th>' + t('日期') + '</th><th>' + t('活动数') + '</th><th>' + t('训练内容') + '</th><th></th></tr></thead><tbody>' + day_rows + '</tbody></table>') if day_rows else '<div class="empty">' + t('暂无训练记录。') + '</div>'}
+        <h2>{t('当前 PR')}</h2>
+        {('<table><thead><tr><th>' + t('动作') + '</th><th>e1RM kg</th><th>' + t('最佳组') + '</th><th>' + t('日期') + '</th></tr></thead><tbody>' + pr_rows + '</tbody></table>') if pr_rows else '<div class="empty">' + t('暂无 PR 状态。') + '</div>'}
+        <h2>{t('最近计划流程')}</h2>
+        {('<table><thead><tr><th>' + t('目标日期') + '</th><th>' + t('状态') + '</th><th>' + t('主肌群') + '</th><th>' + t('恢复调整') + '</th></tr></thead><tbody>' + pipeline_rows + '</tbody></table>') if pipeline_rows else '<div class="empty">' + t('暂无计划流程记录。') + '</div>'}
         """
-        return page("TrainingOS Dashboard", body)
+        return page("TrainingOS Dashboard", body, "zh-CN" if locale == "zh" else "en")
 
-    def sync_garmin_today(self, runner=subprocess.run, today: str | None = None) -> str:
+    def sync_garmin_today(self, runner=subprocess.run, today: str | None = None, locale: str = "zh") -> str:
+        locale = resolve_locale(override=locale)
+        t = lambda value: dashboard_text(locale, value)
         target_date = today or dt.date.today().isoformat()
         command = [
             sys.executable,
@@ -459,14 +529,14 @@ class ReviewServer:
                 status="error",
                 details={"metric_date": target_date, "reason": "timeout"},
             )
-            return self.dashboard_page("Garmin 读取超时，请稍后重试或查看调试观测。", True)
+            return self.dashboard_page(t("Garmin 读取超时，请稍后重试或查看调试观测。"), True, locale)
         except OSError as exc:
             trainingos_observability.record_event(
                 "garmin_manual_sync_finished",
                 status="error",
                 details={"metric_date": target_date, "reason": type(exc).__name__},
             )
-            return self.dashboard_page("无法启动 Garmin 读取进程，请查看调试观测。", True)
+            return self.dashboard_page(t("无法启动 Garmin 读取进程，请查看调试观测。"), True, locale)
 
         if completed.returncode != 0:
             trainingos_observability.record_event(
@@ -474,7 +544,7 @@ class ReviewServer:
                 status="error",
                 details={"metric_date": target_date, "returncode": completed.returncode},
             )
-            return self.dashboard_page("Garmin 读取失败，请查看调试观测后重试。", True)
+            return self.dashboard_page(t("Garmin 读取失败，请查看调试观测后重试。"), True, locale)
 
         with self.connection() as connection:
             row = connection.execute(
@@ -495,13 +565,18 @@ class ReviewServer:
                 status="warning",
                 details={"metric_date": target_date, "available_fields": 0},
             )
-            return self.dashboard_page("Garmin 已响应，但今天尚无可显示的恢复指标。", True)
+            return self.dashboard_page(t("Garmin 已响应，但今天尚无可显示的恢复指标。"), True, locale)
 
         trainingos_observability.record_event(
             "garmin_manual_sync_finished",
             details={"metric_date": target_date, "available_fields": available},
         )
-        return self.dashboard_page(f"Garmin 今日状态同步成功，更新了 {available} 个恢复指标。")
+        message = (
+            f"Garmin 今日状态同步成功，更新了 {available} 个恢复指标。"
+            if locale == "zh"
+            else f"Garmin status synced. Updated {available} recovery metrics."
+        )
+        return self.dashboard_page(message, locale=locale)
 
     def list_page(self) -> str:
         with self.connection() as connection:
@@ -1173,6 +1248,9 @@ def make_handler(app: ReviewServer):
         def log_message(self, format: str, *args: object) -> None:
             return
 
+        def request_locale(self, override: str | None = None) -> str:
+            return resolve_locale(self.headers.get("Accept-Language"), override)
+
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
             query = parse_qs(parsed.query)
@@ -1200,7 +1278,7 @@ def make_handler(app: ReviewServer):
                 self.respond(app.offline_page())
                 return
             if parsed.path == "/":
-                self.respond(app.dashboard_page())
+                self.respond(app.dashboard_page(locale=self.request_locale(query.get("lang", [None])[0])))
                 return
             if parsed.path == "/training":
                 self.respond(app.list_page())
@@ -1235,8 +1313,14 @@ def make_handler(app: ReviewServer):
             self.send_error(404)
 
         def do_POST(self) -> None:
-            if self.path == "/garmin/sync":
-                self.respond(app.sync_garmin_today())
+            parsed = urlparse(self.path)
+            query = parse_qs(parsed.query)
+            if parsed.path == "/garmin/sync":
+                self.respond(
+                    app.sync_garmin_today(
+                        locale=self.request_locale(query.get("lang", [None])[0])
+                    )
+                )
                 return
             if self.path == "/debug/clear":
                 trainingos_observability.clear_events()

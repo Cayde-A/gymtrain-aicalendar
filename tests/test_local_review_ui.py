@@ -7,12 +7,29 @@ from scripts import local_review_ui, trainingos_db
 
 
 class LocalReviewUiBodyMetricsTestCase(unittest.TestCase):
+    def test_dashboard_locale_follows_accept_language_and_allows_override(self):
+        self.assertEqual(local_review_ui.resolve_locale("zh-CN,zh;q=0.9"), "zh")
+        self.assertEqual(local_review_ui.resolve_locale("en-AU,en;q=0.9"), "en")
+        self.assertEqual(local_review_ui.resolve_locale("zh-CN", "en"), "en")
+        self.assertEqual(local_review_ui.resolve_locale(None), "en")
+
+    def test_dashboard_renders_english_labels_and_first_training_state(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app = local_review_ui.ReviewServer(Path(tmpdir) / "trainingos.sqlite")
+            rendered = app.dashboard_page(locale="en")
+        self.assertIn('<html lang="en">', rendered)
+        self.assertIn("TrainingOS Overview", rendered)
+        self.assertIn("Sync Garmin now", rendered)
+        self.assertIn("Training days (30d)", rendered)
+        self.assertIn("wait for your first completed workout", rendered)
+        self.assertNotIn("立即读取 Garmin", rendered)
+
     def test_dashboard_exposes_manual_garmin_sync_button(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             app = local_review_ui.ReviewServer(Path(tmpdir) / "trainingos.sqlite")
             rendered = app.dashboard_page()
 
-        self.assertIn('action="/garmin/sync"', rendered)
+        self.assertIn('action="/garmin/sync?lang=zh"', rendered)
         self.assertIn("立即读取 Garmin", rendered)
 
     def test_manual_garmin_sync_updates_dashboard(self):
